@@ -1,0 +1,5 @@
+# Normalize line endings in the repository. install.sh in particular MUST be checked out with
+# LF: a CRLF copy fails on macOS/Linux with "bad interpreter: /usr/bin/env bash^M", which would
+# break one of the two documented install routes.
+* text=auto eol=lf
+*.png binary

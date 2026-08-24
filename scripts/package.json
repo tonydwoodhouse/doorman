@@ -1,0 +1,19 @@
+{
+  "name": "doorman",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Capture and reuse a browser session so UI tests/screenshots can reach authenticated pages without automating the login.",
+  "scripts": {
+    "ensure": "node ensure.mjs",
+    "login": "node login-once.mjs",
+    "check": "node auth-check.mjs",
+    "shot": "node shot.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "playwright": "1.62.0"
+  }
+}

@@ -1,0 +1,14 @@
+# Per-developer artifacts — never commit these.
+node_modules/
+
+# Hold a LIVE authenticated session: cookies, localStorage, and (for MSAL / Entra ID apps)
+# the sessionStorage tokens. Committing either would leak your login. One pair per profile.
+storageState*.json
+sessionStorage*.json
+
+# Screenshot output from auth-check.mjs / shot.mjs / ad-hoc scripts.
+*.png
+
+# NOTE: package-lock.json is deliberately NOT ignored. Committing it pins the exact Playwright
+# build for everyone, so the whole team shares one cached Chromium instead of each developer
+# resolving a different version and downloading ~100MB again.

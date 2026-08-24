@@ -1,0 +1,9 @@
+# This repo ships source only. These should never appear here, but guard anyway:
+node_modules/
+storageState*.json
+sessionStorage*.json
+*.png
+
+# scripts/package-lock.json IS committed on purpose — it pins the exact Playwright build for the
+# plugin and for every project the toolkit is vendored into. Only ignore a stray root lockfile.
+/package-lock.json

@@ -1,0 +1,7 @@
+{
+  "appName": "My App",
+  "baseUrl": "https://localhost:5001",
+  "loginPath": "/Login",
+  "defaultCheckPath": "/",
+  "authenticatedSelector": null
+}
