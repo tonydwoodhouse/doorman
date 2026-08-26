@@ -1,8 +1,6 @@
 ---
-name: "get-past-login"
-description: "Get past a sign-in wall that is blocking you, using this workspace's vendored doorman toolkit. Use whenever a page redirects to a login, returns 401 or 403, renders as signed-out, or a saved session has expired — get a working session, then carry on with whatever you were already doing. Also use for any browser check, screenshot or CSS/layout inspection of a page that needs a signed-in user."
-user-invocable: true
-disable-model-invocation: false
+name: get-past-login
+description: Get past a sign-in wall that is blocking you, using this workspace's vendored doorman toolkit. Use whenever a page redirects to a login, returns 401 or 403, renders as signed-out, or a saved session has expired — get a working session, then carry on with whatever you were already doing. Also use for any browser check, screenshot or CSS/layout inspection of a page that needs a signed-in user.
 ---
 
 # Getting past a sign-in wall
@@ -143,6 +141,9 @@ a developer problem: check `authenticatedSelector`, `authenticatedUrlPattern` an
 **Never** ask for, type, store, or log their credentials. Never print the contents of
 `storageState*.json` or `sessionStorage*.json`, and never copy them outside the workspace — they
 are a live session.
+
+This step needs a local, visible desktop to open a browser window in — it will not work in a
+remote or cloud sandbox where nobody can see or click through the window that opens.
 
 ### Not-set-up machine
 

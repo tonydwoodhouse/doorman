@@ -95,4 +95,6 @@ The developer has to sign in once per profile. Don't create profiles they didn't
   signed in as the developer. Never commit them, print their contents, or copy them outside the
   workspace.
 - Point this at local or test environments only, never production.
+- Interactive sign-in needs a local, visible desktop to open a browser window in. It will not
+  work in a remote or cloud sandbox where nobody can see or click through the window that opens.
 <!-- doorman:end -->

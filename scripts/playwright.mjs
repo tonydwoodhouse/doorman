@@ -2,7 +2,7 @@
 //
 // Vendored, that is node_modules beside these scripts and a plain `import 'playwright'` would do.
 // As a plugin it is not: the plugin directory can be read-only and is replaced wholesale on update,
-// so dependencies are installed into the plugin's data directory instead (hooks/install-deps.mjs).
+// so dependencies are installed into the plugin's data directory instead (scripts/install-deps.mjs).
 // Node resolves bare specifiers by walking up from the importing *file*, which would never reach
 // there, and NODE_PATH does not apply to ES modules — hence resolving the path ourselves.
 //
@@ -11,11 +11,9 @@
 import { existsSync } from 'fs';
 import { join } from 'path';
 import { pathToFileURL } from 'url';
-import { DEPS_DIR, PLUGIN_MODE, PLUGIN_ROOT } from './paths.mjs';
+import { DEPS_DIR, PLUGIN_MODE, SCRIPT_DIR } from './paths.mjs';
 
 const installed = join(DEPS_DIR, 'node_modules', 'playwright');
-// Only read inside the PLUGIN_MODE branch, where it is never null.
-const PLUGIN_ROOT_FOR_HINT = PLUGIN_ROOT ?? '';
 
 async function load() {
   // A bare import first: it is the normal case, and it lets Node's own resolution handle hoisted
@@ -39,8 +37,8 @@ async function load() {
     console.error('Playwright is not installed.');
     if (PLUGIN_MODE) {
       console.error(`Expected it at ${installed}`);
-      console.error('Start a new Claude Code session to let the plugin install it, or run it now:');
-      console.error(`  node "${join(PLUGIN_ROOT_FOR_HINT, 'hooks', 'install-deps.mjs')}" --sync`);
+      console.error('Start a new session to let the plugin install it, or run it now:');
+      console.error(`  node "${join(SCRIPT_DIR, 'install-deps.mjs')}" --sync`);
     } else {
       console.error('Run from the toolkit directory:  npm install && npx playwright install chromium');
     }

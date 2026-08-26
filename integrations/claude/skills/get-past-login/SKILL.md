@@ -17,16 +17,17 @@ assumed to be installed — don't try it first.
 
 ## Where things are
 
-The scripts live in the plugin, not in the project. Set this once per session and use it in every
-command below:
+The scripts live in the doorman repo the plugin was installed from, not in the project. Set this
+once per session and use it in every command below:
 
 ```bash
-DOORMAN="$CLAUDE_PLUGIN_ROOT/scripts"
+DOORMAN="$CLAUDE_PLUGIN_ROOT/../../scripts"
 ```
 
 If `$CLAUDE_PLUGIN_ROOT` is empty in your shell, derive it from the path of this very file: it is
-`<plugin>/skills/get-past-login/SKILL.md`, so the scripts are `../../scripts` beside it. Use an absolute
-path, and confirm it with `node "$DOORMAN/paths.mjs"`, which prints every location it resolved:
+`<repo>/integrations/claude/skills/get-past-login/SKILL.md`, so the scripts are `../../../../scripts`
+beside it. Use an absolute path, and confirm it with `node "$DOORMAN/paths.mjs"`, which prints every
+location it resolved:
 
 | | |
 |---|---|
@@ -154,6 +155,8 @@ against the URL the log reports.
   in as the developer. They live outside the project on purpose. Never print their contents, and
   never copy them into the repo or anywhere else.
 - Point this at local or test environments only, never production.
+- Interactive sign-in needs a local, visible desktop to open a browser window in. It will not work
+  in a remote or cloud sandbox where nobody can see or click through the window that opens.
 
 ## When something isn't set up
 
@@ -161,7 +164,7 @@ Work through these in order; only the interactive sign-in needs the developer.
 
 1. **Playwright missing** (exit 4 saying so) — the plugin installs it on session start. If the
    message says it is still installing, wait and retry. Otherwise run
-   `node "$CLAUDE_PLUGIN_ROOT/hooks/install-deps.mjs" --sync` and read the log path it prints.
+   `node "$CLAUDE_PLUGIN_ROOT/../../scripts/install-deps.mjs" --sync` and read the log path it prints.
 2. **Not configured** (exit 4 saying so) — §0, or the `doorman:setup` skill.
 3. **Dev server down** (exit 4) — start it per the project's run instructions.
 4. **No session / expired** (exit 2 or 1) — §3.

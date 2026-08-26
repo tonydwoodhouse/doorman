@@ -19,26 +19,30 @@ your authenticated session is saved to `storageState.json`, and every later head
 
 There are two ways to run this, and they differ only in where things are kept:
 
-| | Claude Code plugin | Vendored (`tools/doorman/`) |
+| | Claude Code / Codex plugin | Vendored (`tools/doorman/`) |
 |---|---|---|
 | scripts | in the installed plugin | committed in your repo |
 | config | `<project>/.claude/doorman/doorman.config.json` | `doorman.config.json` beside the scripts |
-| session files | the plugin's data directory, outside the project | beside the scripts, gitignored |
-| screenshots | the plugin's data directory | beside the scripts, gitignored |
+| session files | the host's plugin data directory, outside the project | beside the scripts, gitignored |
+| screenshots | the host's plugin data directory | beside the scripts, gitignored |
 | Playwright | installed once per machine | `node_modules` per project |
 
 ```bash
 node paths.mjs      # prints every one of those, resolved, for the project you're standing in
 ```
 
-`paths.mjs` decides which mode it's in from its own location — a plugin checkout has
-`.claude-plugin/plugin.json` above it, and the installer never copies that — so a vendored install
-behaves the same however it is invoked. Every location can be overridden: `DOORMAN_CONFIG`,
-`DOORMAN_SESSION_DIR`, `DOORMAN_OUTPUT_DIR`, `DOORMAN_PROJECT_DIR`.
+`paths.mjs` decides which mode it's in from its own location — a full checkout of this repo has
+`integrations/claude/.claude-plugin/plugin.json` or `integrations/codex/.codex-plugin/plugin.json`
+one directory up, and the installer never copies `integrations/` — so a vendored install behaves
+the same however it is invoked. Data directory resolution accepts `DOORMAN_DATA_DIR`, Codex's own
+`PLUGIN_DATA`, and Claude Code's `CLAUDE_PLUGIN_DATA`, in that order. Every location can also be
+overridden directly: `DOORMAN_CONFIG`, `DOORMAN_SESSION_DIR`, `DOORMAN_OUTPUT_DIR`,
+`DOORMAN_DEPS_DIR`, `DOORMAN_PROJECT_DIR`.
 
 Vendored, run the commands **from this folder**. As a plugin, run them from anywhere inside the
-project (it is found from the working directory) using the plugin's path:
-`node "$CLAUDE_PLUGIN_ROOT/scripts/ensure.mjs"`. The examples below use the short form.
+project (it is found from the working directory) using the plugin's path — Claude Code:
+`node "$CLAUDE_PLUGIN_ROOT/../../scripts/ensure.mjs"`; Codex: `node "$PLUGIN_ROOT/../../scripts/ensure.mjs"`.
+The examples below use the short form.
 
 ## Does this work with my app?
 
@@ -158,11 +162,14 @@ malformed JSON, invalid regular expressions, or invalid values stop the script w
 
 You need [Node.js](https://nodejs.org/) 20+ installed.
 
-**As a plugin** there is nothing to do: a `SessionStart` hook installs Playwright and Chromium into
-the plugin's data directory the first time, in the background, and does nothing on every session
-after that. It is guarded by a hash of `package.json` + `package-lock.json`, so bumping the pinned
-version is all it takes to have every machine update itself. `DOORMAN_SKIP_INSTALL=1` turns it off,
-and `node hooks/install-deps.mjs --sync` runs it in the foreground when you want to watch it.
+**As a plugin** there is nothing to do: a `SessionStart` hook (Claude Code and Codex both support
+it — see `integrations/claude/hooks/hooks.json` and `integrations/codex/hooks/hooks.json`) installs
+Playwright and Chromium into the host's plugin data directory the first time, in the background,
+and does nothing on every session after that. It is guarded by a hash of `package.json` +
+`package-lock.json`, so bumping the pinned version is all it takes to have every machine update
+itself. `DOORMAN_SKIP_INSTALL=1` turns it off, and `node install-deps.mjs --sync` runs it in the
+foreground when you want to watch it (or if plugin-bundled hooks aren't enabled/trusted yet on your
+host — the skills also point here as a fallback).
 
 **Vendored**, from this folder:
 
@@ -365,8 +372,9 @@ const ctx = await browser.newContext({
 
 ## Letting an agent drive it
 
-As a plugin, the `get-past-login` and `setup` skills tell Claude everything below. Vendored, the installer
-writes a `doorman` section into the workspace's root `CLAUDE.md` instead. Either way the flow is:
+As a plugin, the `get-past-login` and `setup` skills tell the agent everything below. Vendored, the
+installer writes a `doorman` section into the workspace's `CLAUDE.md` and `AGENTS.md` instead.
+Either way the flow is:
 
 1. Run `node ensure.mjs` **in the background** and branch on the exit code.
 2. When it prints `=== WAITING FOR SIGN-IN ===`, ask you to sign in at the window that just
@@ -377,16 +385,21 @@ The marker lines (`=== SIGN-IN REQUIRED ===`, `=== WAITING FOR SIGN-IN ===`,
 `=== SIGN-IN COMPLETE ===`, `=== SESSION READY ===`) exist for exactly this purpose and are
 stable. `ensure.mjs --no-login` is the "check but don't interrupt me" variant.
 
-## Skills (Claude Code)
+## Skills (Claude Code and Codex)
 
-The plugin ships three: **`doorman:get-past-login`** (verify and screenshot gated pages),
-**`doorman:setup`** (configure a project) and **`doorman:vendor`** (make a committed copy like this
-one). Nothing to install.
+Each plugin ships three skills with identical behavior, addressed the way its host expects
+(`doorman:get-past-login` / `doorman:setup` / `doorman:vendor` on Claude Code, mentioned as
+`$get-past-login` / `$setup` / `$vendor` or matched automatically on Codex):
+**`get-past-login`** (verify and screenshot gated pages), **`setup`** (configure a project) and
+**`vendor`** (make a committed copy like this one). Nothing to install — see
+`integrations/claude/skills/` and `integrations/codex/skills/`.
 
-For a vendored install the toolkit repo has `installer/get-past-login.SKILL.template.md`, which the
-installer can drop at `.claude/skills/get-past-login/SKILL.md` with `--install-skill`. It reads
-`doorman.config.json` at runtime, so it needs no substitutions. Worth doing only if some
-contributors won't have the plugin, since it duplicates what the plugin already provides.
+For a vendored install the toolkit repo has `installers/get-past-login.SKILL.template.md` (Claude)
+and `installers/get-past-login.codex.SKILL.template.md` (Codex), which the installer drops at
+`.claude/skills/get-past-login/SKILL.md` and `.agents/skills/get-past-login/SKILL.md` with
+`--install-skill`. Both read `doorman.config.json` at runtime, so they need no substitutions. Worth
+doing only if some contributors won't have a plugin installed, since it duplicates what the plugin
+already provides.
 
 ## Notes / gotchas
 
@@ -402,3 +415,6 @@ contributors won't have the plugin, since it duplicates what the plugin already 
   inferring authentication only from a URL; choose a visible element unavailable to anonymous users.
 - **Local and test environments only.** This persists a live session to disk; prefer a dedicated
   test account and never point it at production.
+- **Interactive sign-in needs a local, visible desktop.** It opens a real browser window and waits
+  for a human to use it — this will not work in a remote or cloud sandbox where nobody can see or
+  click through that window.

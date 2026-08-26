@@ -1,0 +1,19 @@
+{
+  "name": "doorman",
+  "interface": {
+    "displayName": "doorman"
+  },
+  "plugins": [
+    {
+      "name": "doorman",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/tonydwoodhouse/doorman.git",
+        "path": "./integrations/codex",
+        "ref": "main"
+      },
+      "description": "Get past a sign-in wall: replay a browser session the developer signed in for once, so pages behind a login stop blocking browser automation.",
+      "category": "Productivity"
+    }
+  ]
+}

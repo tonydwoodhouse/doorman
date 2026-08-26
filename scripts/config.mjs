@@ -20,7 +20,7 @@ import {
 const rel = relative(PROJECT_DIR, CONFIG_PATH);
 const configLabel = !rel || rel.startsWith('..') || isAbsolute(rel) ? CONFIG_PATH : rel;
 
-// Exit codes are the contract with CLAUDE.md and the get-past-login skill. Keep them stable.
+// Exit codes are the contract with CLAUDE.md/AGENTS.md and the get-past-login skill. Keep them stable.
 // Defined here (the lowest layer) so configuration failures can use them too; session.mjs
 // re-exports them for convenience.
 export const EXIT = {
@@ -148,7 +148,7 @@ function loadFile() {
     fail(
       `No doorman configuration for this project yet (expected ${CONFIG_PATH}).`,
       'Run:  node detect.mjs --write     (finds baseUrl in this project\'s own files and creates it)',
-      PLUGIN_MODE ? 'Or ask Claude to set up doorman for this project.' : [],
+      PLUGIN_MODE ? 'Or ask your AI assistant to set up doorman for this project.' : [],
     );
   }
   try {

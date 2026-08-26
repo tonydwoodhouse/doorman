@@ -11,7 +11,7 @@ One config file, five fields, most of them derivable from the repo. Aim to finis
 the developer anything except to sign in at the end.
 
 ```bash
-DOORMAN="$CLAUDE_PLUGIN_ROOT/scripts"      # if empty, it is ../../scripts beside this file
+DOORMAN="$CLAUDE_PLUGIN_ROOT/../../scripts"    # if empty, it is ../../../../scripts beside this file
 node "$DOORMAN/paths.mjs"                  # where the config will go, and whether one exists
 ```
 

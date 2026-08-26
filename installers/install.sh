@@ -2,22 +2,22 @@
 # Install (or remove) the doorman toolkit in a target workspace (macOS / Linux / Git Bash).
 #
 # This is the vendored install: a self-contained copy committed to the project, for CI and for
-# anyone not using the Claude Code plugin. Copies scripts/ (plus installer/doorman.config.json)
-# into <workspace>/<tools-dir> (default tools/doorman). Never copies per-developer artifacts
-# (node_modules, storageState*.json, *.png). Existing files are skipped unless --force, so
-# re-running won't clobber a customized doorman.config.json.
+# anyone not using the Claude Code or Codex plugin. Copies scripts/ (plus
+# config/doorman.config.example.json) into <workspace>/<tools-dir> (default tools/doorman). Never
+# copies per-developer artifacts (node_modules, storageState*.json, *.png). Existing files are
+# skipped unless --force, so re-running won't clobber a customized doorman.config.json.
 #
 # Usage:
 #   ./install.sh [--workspace PATH] [--tools-dir REL] [--install-skill] [--bootstrap] [--force]
 #   ./install.sh [--workspace PATH] [--tools-dir REL] --uninstall
 #
-# --uninstall removes only what this installer added: the toolkit files, the CLAUDE.md section,
-# the skill, and any saved session (which holds live credentials). Anything else is left in
-# place and reported.
+# --uninstall removes only what this installer added: the toolkit files, the CLAUDE.md and
+# AGENTS.md sections, the skills, and any saved session (which holds live credentials). Anything
+# else is left in place and reported.
 #
 # Examples:
 #   ./install.sh --workspace ~/src/my-app --install-skill --bootstrap
-#   cd ~/src/my-app && /path/to/doorman/install.sh   # installs into the cwd
+#   cd ~/src/my-app && /path/to/doorman/installers/install.sh   # installs into the cwd
 set -euo pipefail
 
 workspace="$(pwd)"
@@ -40,22 +40,27 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-script_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-scripts_dir="$script_root/scripts"      # the runtime, shared with the plugin
-installer_dir="$script_root/installer"  # inputs only this installer uses
-[ -d "$scripts_dir" ]   || { echo "scripts/ not found next to install.sh ($scripts_dir)" >&2; exit 1; }
-[ -d "$installer_dir" ] || { echo "installer/ not found next to install.sh ($installer_dir)" >&2; exit 1; }
-[ -d "$workspace" ]     || { echo "Workspace not found: $workspace" >&2; exit 1; }
+script_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"      # installers/ — also where the
+                                                                   # section/skill templates live
+repo_root="$(cd "$script_root/.." && pwd)"
+scripts_dir="$repo_root/scripts"   # the runtime, shared with both plugins
+config_dir="$repo_root/config"     # the placeholder config this installer starts from
+[ -d "$scripts_dir" ] || { echo "scripts/ not found next to installers/ ($scripts_dir)" >&2; exit 1; }
+[ -d "$config_dir" ]  || { echo "config/ not found next to installers/ ($config_dir)" >&2; exit 1; }
+[ -d "$workspace" ]   || { echo "Workspace not found: $workspace" >&2; exit 1; }
 
 dest="$workspace/$tools_dir"
 claude_path="$workspace/CLAUDE.md"
-claude_section_start='<!-- doorman:start -->'
-claude_section_end='<!-- doorman:end -->'
-skill_dir="$workspace/.claude/skills/get-past-login"
-skill_dest="$skill_dir/SKILL.md"
+agents_path="$workspace/AGENTS.md"
+section_start='<!-- doorman:start -->'
+section_end='<!-- doorman:end -->'
+claude_skill_dir="$workspace/.claude/skills/get-past-login"
+claude_skill_dest="$claude_skill_dir/SKILL.md"
+codex_skill_dir="$workspace/.agents/skills/get-past-login"
+codex_skill_dest="$codex_skill_dir/SKILL.md"
 
 # The payload: everything in scripts/ except per-developer artifacts, plus the placeholder config
-# from installer/ (the plugin has no use for it, so it doesn't live in scripts/). Enumerated rather
+# from config/ (the plugins have no use for it, so it doesn't live in scripts/). Enumerated rather
 # than listed, so a new script is picked up automatically. This list doubles as the manifest for
 # --uninstall, so it only ever removes what it installed.
 payload_names=()
@@ -72,7 +77,7 @@ payload_names+=("doorman.config.json")
 # Where each payload file comes from.
 payload_src() {
   case "$1" in
-    doorman.config.json) echo "$installer_dir/$1" ;;
+    doorman.config.json) echo "$config_dir/doorman.config.example.json" ;;
     *) echo "$scripts_dir/$1" ;;
   esac
 }
@@ -92,24 +97,25 @@ prune_empty_dirs() {
   done
 }
 
-# 0 = section removed, 1 = no section present, 2 = CLAUDE.md held nothing else and was deleted.
-remove_claude_section() {
-  [ -e "$claude_path" ] || return 1
-  grep -Fq "$claude_section_start" "$claude_path" || return 1
-  grep -Fq "$claude_section_end" "$claude_path" || return 1
+# 0 = section removed, 1 = no section present, 2 = the file held nothing else and was deleted.
+remove_section() {
+  local path="$1"
+  [ -e "$path" ] || return 1
+  grep -Fq "$section_start" "$path" || return 1
+  grep -Fq "$section_end" "$path" || return 1
   local out
-  out="$(mktemp "${claude_path}.tmp.XXXXXX")"
+  out="$(mktemp "${path}.tmp.XXXXXX")"
   # Drop the marked block, squeeze the blank-line run it leaves, trim leading/trailing blanks.
-  awk -v start="$claude_section_start" -v end="$claude_section_end" '
+  awk -v start="$section_start" -v end="$section_end" '
     $0 == start { skipping = 1; next }
     skipping && $0 == end { skipping = 0; next }
     !skipping { print }
-  ' "$claude_path" | cat -s | sed '/./,$!d' | sed -e :a -e '/^\n*$/{$d;N;};/\n$/ba' > "$out"
+  ' "$path" | cat -s | sed '/./,$!d' | sed -e :a -e '/^\n*$/{$d;N;};/\n$/ba' > "$out"
   if [ -s "$out" ]; then
-    mv "$out" "$claude_path"
+    mv "$out" "$path"
     return 0
   fi
-  rm -f "$out" "$claude_path"
+  rm -f "$out" "$path"
   return 2
 }
 
@@ -141,17 +147,29 @@ if [ "$uninstall" -eq 1 ]; then
     fi
   fi
 
-  if [ -e "$skill_dest" ]; then
-    rm -f "$skill_dest"
+  if [ -e "$claude_skill_dest" ]; then
+    rm -f "$claude_skill_dest"
     removed+=(".claude/skills/get-past-login/SKILL.md")
-    prune_empty_dirs "$skill_dir"
+    prune_empty_dirs "$claude_skill_dir"
+  fi
+  if [ -e "$codex_skill_dest" ]; then
+    rm -f "$codex_skill_dest"
+    removed+=(".agents/skills/get-past-login/SKILL.md")
+    prune_empty_dirs "$codex_skill_dir"
   fi
 
   claude_status=0
-  remove_claude_section || claude_status=$?
+  remove_section "$claude_path" || claude_status=$?
   case "$claude_status" in
     0) removed+=("CLAUDE.md (doorman section only)") ;;
     2) removed+=("CLAUDE.md (contained nothing else)") ;;
+  esac
+
+  agents_status=0
+  remove_section "$agents_path" || agents_status=$?
+  case "$agents_status" in
+    0) removed+=("AGENTS.md (doorman section only)") ;;
+    2) removed+=("AGENTS.md (contained nothing else)") ;;
   esac
 
   if [ "${#removed[@]}" -eq 0 ]; then
@@ -193,59 +211,69 @@ for name in "${payload_names[@]}"; do
 done
 
 if [ "$install_skill" -eq 1 ]; then
-  mkdir -p "$skill_dir"
-  copy_one "$installer_dir/get-past-login.SKILL.template.md" "$skill_dest" ".claude/skills/get-past-login/SKILL.md (reads doorman.config.json)"
+  mkdir -p "$claude_skill_dir"
+  copy_one "$script_root/get-past-login.SKILL.template.md" "$claude_skill_dest" ".claude/skills/get-past-login/SKILL.md (reads doorman.config.json)"
+  mkdir -p "$codex_skill_dir"
+  copy_one "$script_root/get-past-login.codex.SKILL.template.md" "$codex_skill_dest" ".agents/skills/get-past-login/SKILL.md (reads doorman.config.json)"
 fi
 
-# CLAUDE.md is written last, so a failure above never leaves a workspace advertising a toolkit
-# whose scripts didn't land. The text lives in installer/CLAUDE.section.md so both installers emit
-# identical instructions; {{TOOLS_DIR}} is the only substitution.
-section_template="$installer_dir/CLAUDE.section.md"
-[ -e "$section_template" ] || { echo "Missing $section_template" >&2; exit 1; }
-claude_section="$(sed "s|{{TOOLS_DIR}}|$tools_dir|g" "$section_template")"
+# CLAUDE.md/AGENTS.md are written last, so a failure above never leaves a workspace advertising a
+# toolkit whose scripts didn't land. The text lives in installers/CLAUDE.section.md and
+# installers/AGENTS.section.md so every installer emits identical instructions per file;
+# {{TOOLS_DIR}} is the only substitution.
+section_for() {  # $1 = template filename
+  local template="$script_root/$1"
+  [ -e "$template" ] || { echo "Missing $template" >&2; exit 1; }
+  sed "s|{{TOOLS_DIR}}|$tools_dir|g" "$template"
+}
 
-if [ -e "$claude_path" ]; then
-  has_start=0
-  has_end=0
-  grep -Fq "$claude_section_start" "$claude_path" && has_start=1
-  grep -Fq "$claude_section_end" "$claude_path" && has_end=1
-  if [ "$has_start" -ne "$has_end" ]; then
-    echo "CLAUDE.md contains an incomplete doorman instruction block. Restore or remove it before reinstalling." >&2
-    exit 1
-  fi
-
-  if [ "$has_start" -eq 1 ]; then
-    claude_tmp="$(mktemp)"
-    claude_output="$(mktemp "${claude_path}.tmp.XXXXXX")"
-    printf '%s\n' "$claude_section" > "$claude_tmp"
-    if ! awk -v start="$claude_section_start" -v end="$claude_section_end" -v section="$claude_tmp" '
-      $0 == start {
-        while ((getline line < section) > 0) print line
-        close(section)
-        skipping = 1
-        next
-      }
-      skipping && $0 == end {
-        skipping = 0
-        next
-      }
-      !skipping { print }
-    ' "$claude_path" > "$claude_output"; then
-      rm -f "$claude_tmp" "$claude_output"
+update_instruction_file() {  # $1 = target path, $2 = section text, $3 = label (for error messages)
+  local path="$1" section="$2" label="$3"
+  if [ -e "$path" ]; then
+    local has_start=0 has_end=0
+    grep -Fq "$section_start" "$path" && has_start=1
+    grep -Fq "$section_end" "$path" && has_end=1
+    if [ "$has_start" -ne "$has_end" ]; then
+      echo "$label contains an incomplete doorman instruction block. Restore or remove it before reinstalling." >&2
       exit 1
     fi
-    if ! mv "$claude_output" "$claude_path"; then
-      rm -f "$claude_tmp" "$claude_output"
-      exit 1
+
+    if [ "$has_start" -eq 1 ]; then
+      local section_tmp output_tmp
+      section_tmp="$(mktemp)"
+      output_tmp="$(mktemp "${path}.tmp.XXXXXX")"
+      printf '%s\n' "$section" > "$section_tmp"
+      if ! awk -v start="$section_start" -v end="$section_end" -v section="$section_tmp" '
+        $0 == start {
+          while ((getline line < section) > 0) print line
+          close(section)
+          skipping = 1
+          next
+        }
+        skipping && $0 == end {
+          skipping = 0
+          next
+        }
+        !skipping { print }
+      ' "$path" > "$output_tmp"; then
+        rm -f "$section_tmp" "$output_tmp"
+        exit 1
+      fi
+      if ! mv "$output_tmp" "$path"; then
+        rm -f "$section_tmp" "$output_tmp"
+        exit 1
+      fi
+      rm -f "$section_tmp"
+    else
+      printf '\n%s\n' "$section" >> "$path"
     fi
-    rm -f "$claude_tmp"
   else
-    printf '\n%s\n' "$claude_section" >> "$claude_path"
+    printf '%s\n' "$section" > "$path"
   fi
-else
-  printf '%s\n' "$claude_section" > "$claude_path"
-fi
-echo "  updated: CLAUDE.md (doorman instructions)"
+  echo "  updated: $label (doorman instructions)"
+}
+update_instruction_file "$claude_path" "$(section_for CLAUDE.section.md)" "CLAUDE.md"
+update_instruction_file "$agents_path" "$(section_for AGENTS.section.md)" "AGENTS.md"
 
 # Fill in baseUrl from the project's own files, so the developer usually has nothing to edit.
 # detect.mjs uses Node builtins only, so this runs before npm install. It is never fatal: when
@@ -258,7 +286,7 @@ if [ "$config_is_new" -eq 1 ]; then
     ( cd "$dest" && node detect.mjs --write --root "$workspace" ) || true
   else
     # No Node, so nothing can detect or guard. Mark it unconfigured by hand — inserting the line
-    # rather than rewriting the file keeps this in step with installer/doorman.config.json.
+    # rather than rewriting the file keeps this in step with config/doorman.config.example.json.
     echo "  node not found, so the URL could not be detected."
     { echo '{'; echo '  "configured": false,'; tail -n +2 "$config_path"; } > "$config_path.tmp" \
       && mv "$config_path.tmp" "$config_path"
@@ -275,7 +303,7 @@ fi
 echo ""
 echo "✅ Installed to $dest"
 echo ""
-echo "Next steps (or just ask Claude to do them):"
+echo "Next steps (or just ask your AI assistant to do them):"
 echo "  1. Check  $tools_dir/doorman.config.json  — baseUrl was detected where possible; set"
 echo "     loginPath, defaultCheckPath and ideally authenticatedSelector for this app."
 echo "     (\"configured\": false in that file means detection found nothing.)"

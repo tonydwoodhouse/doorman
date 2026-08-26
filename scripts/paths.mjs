@@ -2,18 +2,22 @@
 // toolkit runs, so nothing else has to care.
 //
 //   Vendored — the scripts, the config and the session files all sit together in the project, at
-//   <project>/tools/doorman. Simple, self-contained, and what CI or a non-Claude tool can use.
+//   <project>/tools/doorman. Simple, self-contained, and what CI or any tool without a plugin host
+//   can use.
 //
 //   Plugin   — the scripts live in the installed plugin (shared between every project, replaced on
 //   update), the config lives in the project being tested, and the session files live in the
-//   plugin's own data directory, off the project's disk entirely. A live session then cannot be
-//   committed even by accident, which is the whole reason for the split.
+//   host's own plugin data directory, off the project's disk entirely. A live session then cannot
+//   be committed even by accident, which is the whole reason for the split. This is the same split
+//   whether the host is Claude Code or Codex — both install this repo's integrations/<host>/
+//   plugin next to the shared scripts/ this file lives in.
 //
 // The mode is decided by this file's own location, deliberately not by an environment variable: a
-// plugin checkout has .claude-plugin/plugin.json one level up, and the installer never copies that
-// directory. So a vendored install cannot slip onto the plugin path because some CLAUDE_* variable
-// happened to be set in the environment, and either layout behaves the same run from a shell as it
-// does run by an agent.
+// full checkout of this repo still has integrations/claude/.claude-plugin/plugin.json or
+// integrations/codex/.codex-plugin/plugin.json one level up, and the installer never copies
+// integrations/ at all. So a vendored install cannot slip onto the plugin path because some
+// *_PLUGIN_* variable happened to be set in the environment, and either layout behaves the same
+// run from a shell as it does run by an agent.
 //
 // Nothing here has side effects and nothing exits: config.mjs owns the failing, so detect.mjs can
 // import this while the configuration is still missing or invalid.
@@ -29,21 +33,31 @@ import { homedir } from 'os';
 /** Directory holding the toolkit's own scripts. */
 export const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 
-/** The plugin root when these scripts are running as part of the installed plugin, else null. */
-export const PLUGIN_ROOT = existsSync(join(SCRIPT_DIR, '..', '.claude-plugin', 'plugin.json'))
-  ? resolve(SCRIPT_DIR, '..')
-  : null;
+const REPO_ROOT_CANDIDATE = resolve(SCRIPT_DIR, '..');
+const HAS_PLUGIN_MANIFEST =
+  existsSync(join(REPO_ROOT_CANDIDATE, 'integrations', 'claude', '.claude-plugin', 'plugin.json')) ||
+  existsSync(join(REPO_ROOT_CANDIDATE, 'integrations', 'codex', '.codex-plugin', 'plugin.json'));
 
-export const PLUGIN_MODE = PLUGIN_ROOT !== null;
+/** Root of this checkout when it's the full doorman repo (either plugin's manifest is present
+ *  beside scripts/), rather than a vendored copy; else null. */
+export const REPO_ROOT = HAS_PLUGIN_MANIFEST ? REPO_ROOT_CANDIDATE : null;
+
+export const PLUGIN_MODE = REPO_ROOT !== null;
 
 /**
- * Writable directory the plugin owns, for session files and installed dependencies.
+ * Writable directory the host plugin owns, for session files and installed dependencies.
  *
- * Claude Code sets CLAUDE_PLUGIN_DATA; the fallback keeps the scripts usable when they are run
- * straight from a shell, where no hook has exported it.
+ * DOORMAN_DATA_DIR wins outright, so a one-off run can be pointed anywhere. PLUGIN_DATA is
+ * Codex's own name for this; CLAUDE_PLUGIN_DATA is what Claude Code sets (Codex also sets this
+ * one, for compatibility with existing plugin hooks, but PLUGIN_DATA is checked first since it's
+ * the name Codex documents). The final fallback keeps the scripts usable when run straight from a
+ * shell, where no host has exported anything.
  */
 export const DATA_DIR = PLUGIN_MODE
-  ? resolve(process.env.CLAUDE_PLUGIN_DATA ?? join(homedir(), '.claude', 'plugin-data', 'doorman'))
+  ? resolve(
+      process.env.DOORMAN_DATA_DIR ?? process.env.PLUGIN_DATA ?? process.env.CLAUDE_PLUGIN_DATA ??
+      join(homedir(), '.doorman', 'plugin-data'),
+    )
   : null;
 
 // ---------------------------------------------------------------------------
@@ -168,9 +182,12 @@ export const OUTPUT_DIR = process.env.DOORMAN_OUTPUT_DIR
  * Directory whose node_modules holds Playwright.
  *
  * The plugin directory itself may be read-only, and is replaced wholesale on update, so
- * dependencies are installed into the data directory instead — see hooks/install-deps.mjs.
+ * dependencies are installed into the data directory instead — see scripts/install-deps.mjs.
+ * DOORMAN_DEPS_DIR overrides it directly, same as SESSION_DIR/OUTPUT_DIR above.
  */
-export const DEPS_DIR = PLUGIN_MODE ? join(DATA_DIR, 'deps') : SCRIPT_DIR;
+export const DEPS_DIR = PLUGIN_MODE
+  ? resolve(process.env.DOORMAN_DEPS_DIR ?? join(DATA_DIR, 'deps'))
+  : SCRIPT_DIR;
 
 /** Per-project directory under the plugin's data directory, or null when vendored. */
 export const PROJECT_DATA_DIR = PLUGIN_MODE ? join(DATA_DIR, 'projects', PROJECT_SLUG) : null;

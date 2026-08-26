@@ -21,60 +21,88 @@ Laravel or Spring without any difference. Node 20+ is needed to run the toolkit,
 app under test. See [Does this work with my app?](scripts/README.md#does-this-work-with-my-app) for
 the few auth styles that genuinely can't work.
 
+Doorman is one runtime with two thin plugin adapters, for whichever agent you use — **Claude Code**
+and **Codex** are both first-class; there's also a vendored mode for CI and everyone else.
+
 ## Install as a plugin (recommended)
 
+**Claude Code:**
 ```
 /plugin marketplace add tonydwoodhouse/doorman
 /plugin install doorman
 ```
 
-That's the whole installation. Nothing is copied into your projects, and Playwright installs itself
-in the background on your next session start.
+**Codex:**
+```
+/plugin marketplace add tonydwoodhouse/doorman
+/plugin install doorman
+```
+
+Either way, that's the whole installation. Nothing is copied into your projects, and Playwright
+installs itself in the background on your next session start (see
+[the execution boundary](#one-thing-that-cannot-be-automated) below for the one thing this can't do
+for you).
 
 Then, in any project:
 
-- **"set up doorman for this project"** — the `doorman:setup` skill finds the dev server URL in the
+- **"set up doorman for this project"** — the `setup` skill finds the dev server URL in the
   project's own files, works out the login and gated routes, and proves a session can be captured.
-- Nothing at all — the `doorman:get-past-login` skill fires on its own the moment the agent hits a
+- Nothing at all — the `get-past-login` skill fires on its own the moment the agent hits a
   login redirect, a 401, or a page that renders signed-out. It verifies the session, asks you to
   sign in at a browser window if it needs one, and then continues what it was doing. Asking for it
   by name (**"screenshot the admin dashboard"**, **"check my CSS change on the settings page"**)
   works too.
-- **"vendor doorman into this repo"** — the `doorman:vendor` skill sets up the committed copy
-  described below, for CI.
+- **"vendor doorman into this repo"** — the `vendor` skill sets up the committed copy described
+  below, for CI.
+
+(Claude Code addresses these as `doorman:setup` / `doorman:get-past-login` / `doorman:vendor`;
+Codex matches them by description automatically, or you can mention them with `$setup` etc. — same
+skills, same behavior, different addressing convention.)
 
 ### Where the plugin keeps things
 
 | | |
 |---|---|
 | config | `<project>/.claude/doorman/doorman.config.json` — per project, safe to commit |
-| session files | the plugin's data directory, **outside every project** |
-| screenshots | the plugin's data directory, per project |
-| Playwright | the plugin's data directory, once per machine |
+| session files | the host's plugin data directory, **outside every project** |
+| screenshots | the host's plugin data directory, per project |
+| Playwright | the host's plugin data directory, once per machine |
 
 Keeping the session out of the repository is deliberate: `storageState.json` is a live session, and
 the surest way to stop it being committed is for it never to be on the project's disk. Run
-`node "$CLAUDE_PLUGIN_ROOT/scripts/paths.mjs"` to print exactly where everything resolved.
+`node "$CLAUDE_PLUGIN_ROOT/../../scripts/paths.mjs"` (Claude Code) or
+`node "$PLUGIN_ROOT/../../scripts/paths.mjs"` (Codex) to print exactly where everything resolved.
 
 The `SessionStart` hook that installs Playwright is guarded by a hash of `scripts/package.json` +
 `package-lock.json`: it acts once, does nothing on every later session, and picks up a version bump
 automatically. It runs detached, so it never delays a session. `DOORMAN_SKIP_INSTALL=1` disables it.
+Both hosts support plugin-bundled `SessionStart` hooks; if yours hasn't trusted/enabled it yet, the
+skills fall back to telling you to run `node install-deps.mjs --sync` by hand.
+
+### One thing that cannot be automated
+
+Interactive sign-in opens a real, visible browser window and waits for a human to use it. That
+needs a local desktop — it will not work in a remote or cloud sandbox where nobody can see or click
+through the window that opens. Everything else in doorman works headlessly; this one step doesn't,
+by design (see the top of this README). That includes CI — see
+[Getting a session into CI](#getting-a-session-into-ci) for how a captured session gets there
+without one.
 
 ## Vendored mode (a committed copy, for CI)
 
-For a CI job, or teammates who don't use Claude Code, install a self-contained copy into the project
-instead. Clone this repo once, then:
+For a CI job, or teammates without a plugin installed, install a self-contained copy into the
+project instead. Clone this repo once, then:
 
 **Windows / PowerShell 7+:**
 ```powershell
 cd path\to\doorman
-./install.ps1 -Workspace C:\src\my-app -InstallSkill -Bootstrap
+./installers/install.ps1 -Workspace C:\src\my-app -InstallSkill -Bootstrap
 ```
 
 **macOS / Linux / Git Bash:**
 ```bash
 cd path/to/doorman
-./install.sh --workspace ~/src/my-app --install-skill --bootstrap
+./installers/install.sh --workspace ~/src/my-app --install-skill --bootstrap
 ```
 
 Flags (both installers):
@@ -83,7 +111,7 @@ Flags (both installers):
 |---|---|---|
 | `-Workspace <path>` | `--workspace <path>` | Target repo root (default: current dir). |
 | `-ToolsDir <rel>` | `--tools-dir <rel>` | Where to put it (default `tools/doorman`). |
-| `-InstallSkill` | `--install-skill` | Also drop a Claude Code skill at `.claude/skills/get-past-login/SKILL.md`. Only useful if some contributors don't have the plugin. |
+| `-InstallSkill` | `--install-skill` | Also drop per-project skills — `.claude/skills/get-past-login/SKILL.md` and `.agents/skills/get-past-login/SKILL.md`. Only useful if some contributors don't have a plugin. |
 | `-Bootstrap` | `--bootstrap` | Run `npm install` + `npx playwright install chromium` after copying. |
 | `-Force` | `--force` | Overwrite existing files (otherwise existing files are skipped). |
 | `-Uninstall` | `--uninstall` | Remove what was installed (see below). |
@@ -92,6 +120,25 @@ Vendored, everything lives together in `tools/doorman/`: the scripts, the config
 files — which the shipped `.gitignore` keeps out of source control. That last point is the trade-off
 against the plugin, so make it knowingly.
 
+### Getting a session into CI
+
+Vendoring installs the toolkit; it does not capture a session for you. Capture is still the one
+interactive step from [above](#one-thing-that-cannot-be-automated), and a CI runner has no visible
+desktop to do it on — so it has to happen somewhere that does, then be carried into CI out of band:
+
+1. On a machine with a real desktop — a developer's, most likely — run the vendored copy's
+   `ensure.mjs` once, signed in as whatever account CI should use.
+2. Take `storageState.json` (and `sessionStorage.json`, if it exists) out of `tools/doorman/` and
+   store them as CI secrets. Never commit them — they're a live, replayable session, not config.
+3. In the CI job, before any doorman script runs, write those secrets back to the same filenames
+   inside `tools/doorman/`, then call only the headless scripts — `auth-check.mjs`, `shot.mjs`, or
+   your own script importing `session.mjs`. Never call `ensure.mjs` or `login-once.mjs` in CI; both
+   try to open a browser window for a human who isn't there.
+
+There's no human in CI to redo this when the session expires (~4–8h, or whatever the app actually
+does), so budget for re-capturing and re-uploading the secret on a schedule, or accept that the job
+starts failing until someone does.
+
 The installer never copies per-developer artifacts (`node_modules/`, session files, `*.png`) and
 **skips files that already exist** unless `-Force`/`--force`, so re-running to pick up an update
 won't clobber a customized `doorman.config.json`. When it creates the config it runs
@@ -99,15 +146,16 @@ won't clobber a customized `doorman.config.json`. When it creates the config it 
 any `npm install`, and it never fails the install.
 
 Every vendored install also writes a clearly marked `doorman` section into the workspace's
-`CLAUDE.md` (from [`installer/CLAUDE.section.md`](installer/CLAUDE.section.md), so both installers
-emit identical text). It gives agents the exit-code contract, tells them to run the sign-in
-**themselves in the background** and simply ask the developer to sign in at the window that appears,
-and states that the session files must never be committed or shared. Re-running replaces only that
-marked section. It is written *after* the payload copies, so a failure never leaves a workspace
-advertising a toolkit whose scripts didn't land.
+`CLAUDE.md` **and** `AGENTS.md` (from [`installers/CLAUDE.section.md`](installers/CLAUDE.section.md)
+and [`installers/AGENTS.section.md`](installers/AGENTS.section.md) — near-identical text, since
+neither references anything plugin-specific). It gives agents the exit-code contract, tells them to
+run the sign-in **themselves in the background** and simply ask the developer to sign in at the
+window that appears, and states that the session files must never be committed or shared.
+Re-running replaces only the marked section in each file. Both are written *after* the payload
+copies, so a failure never leaves a workspace advertising a toolkit whose scripts didn't land.
 
 An existing `.claude/doorman/doorman.config.json` is picked up by a vendored copy too, so a project
-that already used the plugin doesn't get configured twice.
+that already used a plugin doesn't get configured twice.
 
 ## Configure it (per project)
 
@@ -138,7 +186,7 @@ Two guardrails, both deliberate:
 When it finds nothing usable it writes `"configured": false`, so every script stops with
 instructions instead of quietly testing the placeholder. The installers do the same if Node isn't on
 `PATH` and detection can't run at all. `loginPath` and `authenticatedSelector` still need a look at
-the app's routes — the `doorman:setup` skill does that, or fill them in yourself.
+the app's routes — the `setup` skill does that, or fill them in yourself.
 
 Two fields decide how much browser storage a capture keeps. `captureSessionStorage` defaults to
 **on** because MSAL.js / Microsoft Entra ID keep their tokens in `sessionStorage`, which Playwright
@@ -152,7 +200,8 @@ should. Both are explained in
 ## Use it directly
 
 You never have to, but every script is a plain CLI. From `tools/doorman/` in a vendored install, or
-with `$CLAUDE_PLUGIN_ROOT/scripts/` as the prefix under the plugin:
+under a plugin with `$CLAUDE_PLUGIN_ROOT/../../scripts/` (Claude Code) or
+`$PLUGIN_ROOT/../../scripts/` (Codex) as the prefix:
 
 ```bash
 node paths.mjs                                   # where is the config, the session, the browser?
@@ -170,16 +219,11 @@ how to load the saved session in your own Playwright scripts.
 ```
 doorman/
 ├── .claude-plugin/
-│   ├── plugin.json               # plugin manifest
-│   └── marketplace.json          # so this repo can be added as a marketplace
-├── skills/
-│   ├── get-past-login/SKILL.md   # get through a login, then screenshot/inspect
-│   ├── setup/SKILL.md            # configure doorman for a project
-│   └── vendor/SKILL.md           # make a committed copy, for CI
-├── hooks/
-│   ├── hooks.json                # SessionStart -> install-deps.mjs
-│   └── install-deps.mjs          # one-off, detached, hash-guarded Playwright install
-├── scripts/                      # THE RUNTIME — used by the plugin, copied by the installers
+│   └── marketplace.json          # Claude Code marketplace -> integrations/claude
+├── .agents/
+│   └── plugins/
+│       └── marketplace.json      # Codex marketplace -> integrations/codex
+├── scripts/                      # THE RUNTIME — shared by both plugins and copied by the installers
 │   ├── paths.mjs                 # plugin vs vendored: where the config/session/output live
 │   ├── config.mjs                # config + CLI args (defaults < config file < env < flag)
 │   ├── playwright.mjs            # loads Playwright from wherever it is installed
@@ -191,22 +235,34 @@ doorman/
 │   ├── login-once.mjs            # interactive capture on its own
 │   ├── auth-check.mjs            # headless: verify the saved session
 │   ├── shot.mjs                  # headless: screenshot a gated page (verifies first)
+│   ├── install-deps.mjs          # one-off, detached, hash-guarded Playwright install (SessionStart hook)
 │   ├── package.json              # deps: playwright (pinned)
 │   ├── package-lock.json         # committed on purpose — one Chromium for the whole team
 │   ├── .gitignore                # ignores node_modules / session files / *.png
-│   └── README.md                 # the full reference for both modes
-├── installer/                    # inputs the installers use; not part of the plugin runtime
-│   ├── doorman.config.json       # the placeholder config a vendored install starts from
+│   └── README.md                 # the full reference for every mode
+├── config/
+│   └── doorman.config.example.json   # the placeholder config a vendored install starts from
+├── integrations/
+│   ├── claude/                   # the Claude Code plugin
+│   │   ├── .claude-plugin/plugin.json
+│   │   ├── skills/{get-past-login,setup,vendor}/SKILL.md
+│   │   └── hooks/hooks.json      # SessionStart -> ../../scripts/install-deps.mjs
+│   └── codex/                    # the Codex plugin — same behavior, Codex's own conventions
+│       ├── .codex-plugin/plugin.json
+│       ├── skills/{get-past-login,setup,vendor}/SKILL.md
+│       └── hooks/hooks.json
+├── installers/                   # inputs the installers use; not part of either plugin runtime
+│   ├── install.ps1               # vendored install (PowerShell 7+)
+│   ├── install.sh                # vendored install (macOS / Linux / Git Bash)
 │   ├── CLAUDE.section.md         # the agent instructions both installers write to CLAUDE.md
-│   └── get-past-login.SKILL.template.md
-│                                 # optional per-project skill for non-plugin users
-├── install.ps1                   # vendored install (PowerShell 7+)
-├── install.sh                    # vendored install (macOS / Linux / Git Bash)
+│   ├── AGENTS.section.md         # same instructions, written to AGENTS.md
+│   ├── get-past-login.SKILL.template.md         # optional per-project skill (Claude Code)
+│   └── get-past-login.codex.SKILL.template.md   # optional per-project skill (Codex)
 ├── LICENSE                       # MIT
 └── README.md                     # you are here
 ```
 
-`scripts/` is the single source of truth for the runtime: the plugin executes it in place, and the
+`scripts/` is the single source of truth for the runtime: both plugins execute it in place, and the
 installers copy it. There is no second copy to keep in step.
 
 ## Prerequisites
@@ -229,16 +285,16 @@ scripts while leaving your config alone.
 ## Uninstalling a vendored copy
 
 ```powershell
-./install.ps1 -Workspace C:\src\my-app -Uninstall
+./installers/install.ps1 -Workspace C:\src\my-app -Uninstall
 ```
 ```bash
-./install.sh --workspace ~/src/my-app --uninstall
+./installers/install.sh --workspace ~/src/my-app --uninstall
 ```
 
-Removes only what the installer added: the files it shipped, the marked `CLAUDE.md` section (and the
-file itself if it held nothing else), the skill, and any saved session — those hold live
-credentials, so leaving them behind would be worse than deleting them. `node_modules`, your own
-scripts, and anything else in the folder are left in place and listed so you can decide.
+Removes only what the installer added: the files it shipped, the marked `CLAUDE.md` and `AGENTS.md`
+sections (and either file itself if it held nothing else), the skills, and any saved session — those
+hold live credentials, so leaving them behind would be worse than deleting them. `node_modules`,
+your own scripts, and anything else in the folder are left in place and listed so you can decide.
 
 ## Notes
 
@@ -248,6 +304,8 @@ scripts, and anything else in the folder are left in place and listed so you can
   `npm install` there, and commit both files.
 - Only point this at local or test environments, never production, and prefer a dedicated test
   account — the whole design persists a live session to disk.
+- Interactive sign-in needs a local, visible desktop — see
+  [One thing that cannot be automated](#one-thing-that-cannot-be-automated) above.
 
 ## License
 
