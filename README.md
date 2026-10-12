@@ -78,6 +78,8 @@ plugin's path; `<plugin>` is the installed copy under `~/.claude/plugins/cache/`
 The `SessionStart` hook that installs Playwright is guarded by a hash of `scripts/package.json` +
 `package-lock.json`: it acts once, does nothing on every later session, and picks up a version bump
 automatically. It runs detached, so it never delays a session. `DOORMAN_SKIP_INSTALL=1` disables it.
+Concurrent sessions share one install through a lock; a lock left by an install that was killed is
+recognized (its process is gone, or it is hours old), cleared with a one-line note, and retried.
 Both hosts support plugin-bundled `SessionStart` hooks; if yours hasn't trusted/enabled it yet, the
 skills fall back to telling you to run `node install-deps.mjs --sync` by hand.
 

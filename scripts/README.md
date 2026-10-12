@@ -183,6 +183,13 @@ itself. `DOORMAN_SKIP_INSTALL=1` turns it off, and `node install-deps.mjs --sync
 foreground when you want to watch it (or if plugin-bundled hooks aren't enabled/trusted yet on your
 host — the skills also point here as a fallback).
 
+Only one install runs at a time. The lock (`.installing` in the dependency directory) records the
+installer's PID, host and start time, and is created exclusively. A second session's hook leaves a
+live install alone; `--sync` waits for it rather than failing. A lock whose process has gone — an
+install killed part-way — or that is more than two hours old is stale: the next run clears it,
+prints `doorman: cleared a stale install lock (…)`, and installs. Progress and errors go to
+`install.log` beside it.
+
 **Vendored**, from this folder:
 
 ```bash

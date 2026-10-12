@@ -18,9 +18,15 @@
 //   It runs detached and the hook returns immediately, so session start is never blocked by a
 //   download. DOORMAN_SKIP_INSTALL=1 disables it entirely for anyone who would rather install by
 //   hand — the scripts print the exact command when the dependency is missing.
+//
+// Several sessions can start at once, so the install holds a lock: .installing, created
+// exclusively and holding { pid, startedAt, host }. A lock whose process is gone (or that is older
+// than any install could take) is stale — an install killed mid-way must never block every later
+// one — so it is cleared, with a one-line note, and the install goes ahead.
 import { spawn } from 'child_process';
 import { createHash } from 'crypto';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs';
+import { hostname } from 'os';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
 // paths.mjs resolves the data directory — and, run from the hook, records it so the agent's own
@@ -61,6 +67,142 @@ function isCurrent(hash) {
   return read(STAMP) === hash && existsSync(join(DEPS_DIR, 'node_modules', 'playwright'));
 }
 
+// ---------------------------------------------------------------------------
+// The install lock
+// ---------------------------------------------------------------------------
+
+// Longer than any real install, even a slow first Chromium download. A lock older than this is
+// stale even if a process with its PID is running: by then that PID is likely someone else's.
+const LOCK_MAX_AGE_MS = 2 * 60 * 60 * 1000;
+const LOCK_POLL_MS = 1000;
+
+/** The current lock as { pid, host, startedAt (ms), raw }, or null when there is none. */
+function readLock() {
+  let raw;
+  try {
+    raw = readFileSync(RUNNING, 'utf8');
+  } catch {
+    return null;
+  }
+  let lock = null;
+  try {
+    lock = JSON.parse(raw);
+  } catch {
+    // 0.1.0 wrote a bare timestamp; anything else unreadable is judged by the file's age.
+  }
+  if (lock && typeof lock === 'object') {
+    return { pid: lock.pid, host: lock.host, startedAt: Date.parse(lock.startedAt), raw };
+  }
+  let startedAt = Date.parse(raw.trim());
+  if (Number.isNaN(startedAt)) {
+    try {
+      startedAt = statSync(RUNNING).mtimeMs;
+    } catch {
+      return null;
+    }
+  }
+  return { pid: null, host: null, startedAt, raw };
+}
+
+function pidAlive(pid) {
+  try {
+    process.kill(pid, 0); // signal 0: existence check only
+    return true;
+  } catch (e) {
+    return e.code === 'EPERM'; // exists, just not ours to signal
+  }
+}
+
+/** Why `lock` is stale, or null while its holder may still be working. */
+function staleReason(lock) {
+  const age = Date.now() - lock.startedAt;
+  if (!Number.isFinite(age) || age > LOCK_MAX_AGE_MS) {
+    return `it was taken ${Number.isFinite(age) ? `${Math.round(age / 60000)} minutes ago` : 'at an unknown time'}`;
+  }
+  // A PID only means something on the machine that wrote it (a home directory can be shared).
+  if (lock.host === hostname() && Number.isInteger(lock.pid) && !pidAlive(lock.pid)) {
+    return `process ${lock.pid} is no longer running`;
+  }
+  return null;
+}
+
+/**
+ * Clear `lock` if it is stale. Re-reads first and only removes the file if it is still that same
+ * lock, so a lock another installer has just taken in its place is left alone.
+ */
+function clearIfStale(lock) {
+  const reason = staleReason(lock);
+  if (!reason) return false;
+  if (readLock()?.raw !== lock.raw) return true; // already replaced; let the caller look again
+  rmSync(RUNNING, { force: true });
+  console.log(`doorman: cleared a stale install lock (${reason}).`);
+  return true;
+}
+
+/** Take the lock exclusively. Returns null on success, or the live lock that is in the way. */
+function acquireLock() {
+  mkdirSync(DEPS_DIR, { recursive: true });
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      writeFileSync(RUNNING, `${JSON.stringify({
+        pid: process.pid, startedAt: new Date().toISOString(), host: hostname(),
+      })}\n`, { encoding: 'utf8', flag: 'wx' });
+      return null;
+    } catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+    }
+    const holder = readLock();
+    if (holder && !clearIfStale(holder)) return holder;
+  }
+  return readLock() ?? { pid: null, startedAt: Date.now() };
+}
+
+/** Remove the lock, but only if it is ours. */
+function releaseLock() {
+  const lock = readLock();
+  if (lock && lock.pid === process.pid && lock.host === hostname()) rmSync(RUNNING, { force: true });
+}
+
+/** Is a live install already under way? Clears a stale lock (and says so) on the way. */
+function installRunning() {
+  const lock = readLock();
+  return Boolean(lock) && !clearIfStale(lock);
+}
+
+const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
+
+/**
+ * Install under the lock. With `wait`, a live lock is waited out (and if that install left things
+ * current, there is nothing more to do); without it, a live lock means someone else has this in
+ * hand and null is returned.
+ */
+async function installLocked(hash, { wait }) {
+  let announced = false;
+  for (;;) {
+    const holder = acquireLock();
+    if (!holder) {
+      try {
+        return await install(hash);
+      } finally {
+        releaseLock();
+      }
+    }
+    if (!wait) return null;
+    if (!announced) {
+      const since = Number.isFinite(holder.startedAt) ? new Date(holder.startedAt).toLocaleTimeString() : 'earlier';
+      console.log(`doorman: another install is already running${holder.pid ? ` (pid ${holder.pid}` : ' ('}` +
+        `, since ${since}); waiting for it to finish.`);
+      announced = true;
+    }
+    for (;;) {
+      await sleep(LOCK_POLL_MS);
+      const current = readLock();
+      if (!current || staleReason(current)) break;
+    }
+    if (isCurrent(hash)) return 0;
+  }
+}
+
 /** Run a command in DEPS_DIR, resolving to its exit code. Output is appended to the log. */
 function run(command, args, extraEnv = {}) {
   return new Promise((done) => {
@@ -89,33 +231,28 @@ function run(command, args, extraEnv = {}) {
   });
 }
 
+/** The install itself. Callers hold the lock (see installLocked). */
 async function install(hash) {
-  mkdirSync(DEPS_DIR, { recursive: true });
-  writeFileSync(RUNNING, `${new Date().toISOString()}\n`, 'utf8');
-  try {
-    // Copy the manifests rather than installing in place: scripts/ belongs to the plugin and must
-    // stay exactly as shipped, node_modules and all.
-    for (const name of MANIFESTS) {
-      writeFileSync(join(DEPS_DIR, name), readFileSync(join(SCRIPTS_DIR, name)));
-    }
-
-    // PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD, then an explicit `install chromium`: the playwright package
-    // otherwise fetches Firefox and WebKit too, which is several hundred megabytes this toolkit
-    // never launches. Chromium lands in Playwright's shared cache, so it is one download per
-    // machine per version, not per project.
-    const npmCode = await run('npm', ['install', '--no-audit', '--no-fund', '--loglevel=error'], {
-      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1',
-    });
-    if (npmCode !== 0) return npmCode;
-
-    const browserCode = await run('npx', ['--no-install', 'playwright', 'install', 'chromium']);
-    if (browserCode !== 0) return browserCode;
-
-    writeFileSync(STAMP, `${hash}\n`, 'utf8');
-    return 0;
-  } finally {
-    rmSync(RUNNING, { force: true });
+  // Copy the manifests rather than installing in place: scripts/ belongs to the plugin and must
+  // stay exactly as shipped, node_modules and all.
+  for (const name of MANIFESTS) {
+    writeFileSync(join(DEPS_DIR, name), readFileSync(join(SCRIPTS_DIR, name)));
   }
+
+  // PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD, then an explicit `install chromium`: the playwright package
+  // otherwise fetches Firefox and WebKit too, which is several hundred megabytes this toolkit
+  // never launches. Chromium lands in Playwright's shared cache, so it is one download per
+  // machine per version, not per project.
+  const npmCode = await run('npm', ['install', '--no-audit', '--no-fund', '--loglevel=error'], {
+    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1',
+  });
+  if (npmCode !== 0) return npmCode;
+
+  const browserCode = await run('npx', ['--no-install', 'playwright', 'install', 'chromium']);
+  if (browserCode !== 0) return browserCode;
+
+  writeFileSync(STAMP, `${hash}\n`, 'utf8');
+  return 0;
 }
 
 const hash = manifestHash();
@@ -126,7 +263,16 @@ if (hash === null) {
 } else if (process.env.DOORMAN_SKIP_INSTALL === '1') {
   process.exit(0);
 } else if (mode === '--run' || mode === '--sync') {
-  const code = await install(hash);
+  // Ctrl+C on a foreground install shouldn't leave a lock behind for the next one to judge.
+  for (const signal of ['SIGINT', 'SIGTERM']) {
+    process.on(signal, () => {
+      releaseLock();
+      process.exit(130);
+    });
+  }
+  // --run is the detached child: if another install holds the lock, it has this in hand.
+  // --sync is someone waiting at a prompt: wait for that install rather than fail.
+  const code = await installLocked(hash, { wait: mode === '--sync' });
   if (mode === '--sync') {
     console.log(code === 0
       ? `doorman: Playwright ready in ${DEPS_DIR}`
@@ -135,7 +281,7 @@ if (hash === null) {
   process.exit(mode === '--sync' ? code : 0);
 } else if (isCurrent(hash)) {
   process.exit(0);
-} else if (existsSync(RUNNING)) {
+} else if (installRunning()) {
   process.exit(0); // Another session already started it.
 } else {
   // Detached, with the handles let go, so the hook returns now and the session is not held up.
