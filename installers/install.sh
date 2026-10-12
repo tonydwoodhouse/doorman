@@ -16,9 +16,15 @@
 #                [--reset-config]
 #   ./install.sh [--workspace PATH] [--tools-dir REL] --uninstall
 #
-# --uninstall removes only what this installer added: the toolkit files, the CLAUDE.md and
-# AGENTS.md sections, the skills, and any saved session (which holds live credentials). Anything
-# else is left in place and reported.
+# Every file it writes is recorded, with its SHA-256, in <workspace>/.doorman/install-manifest.json
+# (the receipt; commit it with the toolkit). A re-run updates the files it installed and that nobody
+# has changed since; a file someone changed, or one doorman didn't put there, is skipped unless
+# --force — and --force keeps a .bak of anything it overwrites that doorman didn't write.
+#
+# --uninstall removes only what the receipt lists, and only where the file is still exactly as
+# installed (a changed file is kept and reported; a file --force replaced gets its original back),
+# plus the CLAUDE.md and AGENTS.md sections and any saved session (which holds live credentials).
+# Directories go only once empty. Without a receipt it removes nothing.
 #
 # Examples:
 #   ./install.sh --workspace ~/src/my-app --install-skill --bootstrap
@@ -47,6 +53,10 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# Normalized, because it is also the prefix of every path in the receipt.
+tools_dir="${tools_dir#./}"
+tools_dir="${tools_dir%/}"
+
 script_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"      # installers/ — also where the
                                                                    # section/skill templates live
 repo_root="$(cd "$script_root/.." && pwd)"
@@ -73,7 +83,7 @@ codex_skill_dest="$codex_skill_dir/SKILL.md"
 payload_names=()
 for src in "$scripts_dir"/* "$scripts_dir"/.gitignore; do
   [ -e "$src" ] || continue
-  name="$(basename "$src")"
+  name="${src##*/}"
   case "$name" in
     node_modules|storageState*.json|sessionStorage*.json|*.png|doorman.config.json) continue ;;
   esac
@@ -81,15 +91,103 @@ for src in "$scripts_dir"/* "$scripts_dir"/.gitignore; do
 done
 payload_names+=("doorman.config.example.json")
 
-# Where each payload file comes from.
-payload_src() {
-  case "$1" in
-    doorman.config.example.json) echo "$config_dir/doorman.config.example.json" ;;
-    *) echo "$scripts_dir/$1" ;;
-  esac
-}
 config_name="doorman.config.json"
 config_path="$dest/$config_name"
+
+# ---------------------------------------------------------------------------
+# The receipt: what the installer wrote, so a re-run and --uninstall can tell its files from yours
+# ---------------------------------------------------------------------------
+# One entry per line, in a fixed layout, so it can be read back without jq. install.ps1 writes the
+# identical layout, so either installer can update or remove what the other installed.
+receipt_dir="$workspace/.doorman"
+receipt="$receipt_dir/install-manifest.json"
+version="$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$repo_root/.claude-plugin/plugin.json" | head -n 1)"
+[ -n "$version" ] || version="unknown"
+stamp="$(date +%Y%m%d-%H%M%S)"
+
+if command -v sha256sum >/dev/null 2>&1; then hasher=(sha256sum); else hasher=(shasum -a 256); fi
+
+# Hash files into HASHES (in argument order). Carriage returns are ignored, so a checkout that
+# converts line endings (core.autocrlf) still counts as unchanged. Every process start is slow on
+# Git Bash, so the whole batch costs a handful of them however many files there are: the files
+# containing a CR are copied CR-free by one awk (RS='\r' with ORS='' drops exactly the CRs) and
+# hashed together.
+hash_files() {
+  HASHES=()
+  [ "$#" -gt 0 ] || return 0
+  local with_cr=() f h rest i=0 n=0 tmp
+  while IFS= read -r f; do with_cr+=("$f"); done < <(grep -lU $'\r' "$@" 2>/dev/null || true)
+  while read -r h rest; do HASHES+=("${h#\\}"); done < <("${hasher[@]}" "$@")
+  [ "${#with_cr[@]}" -gt 0 ] || return 0
+  tmp="$(mktemp -d)"
+  awk -v RS='\r' -v ORS='' -v dir="$tmp" \
+    'FNR == 1 { if (out) close(out); out = sprintf("%s/%06d", dir, ++n) } { print > out }' "${with_cr[@]}"
+  local stripped=()
+  while read -r h rest; do stripped+=("${h#\\}"); done < <("${hasher[@]}" "$tmp"/*)
+  rm -rf "$tmp"
+  for f in "$@"; do
+    case " ${with_cr[*]} " in
+      *" $f "*)
+        # with_cr is in argument order (grep reports files in the order given), so the next
+        # stripped hash belongs to this file.
+        HASHES[$i]="${stripped[$n]}"; n=$((n + 1)) ;;
+    esac
+    i=$((i + 1))
+  done
+}
+
+# Parallel arrays rather than an associative one: macOS still ships bash 3.2.
+r_paths=(); r_hashes=(); r_actions=(); r_versions=(); r_backups=()
+
+load_receipt() {
+  [ -f "$receipt" ] || return 1
+  local p h a v b
+  # One sed for the whole file: each entry line becomes path|sha256|action|version|backup.
+  while IFS='|' read -r p h a v b; do
+    r_paths+=("$p"); r_hashes+=("$h"); r_actions+=("$a"); r_versions+=("$v"); r_backups+=("${b%$'\r'}")
+  done < <(sed -n 's/.*"path": *"\([^"]*\)", *"sha256": *"\([^"]*\)", *"action": *"\([^"]*\)", *"version": *"\([^"]*\)", *"backup": *"\([^"]*\)".*/\1|\2|\3|\4|\5/p' "$receipt")
+}
+
+# Sets entry_index to the receipt index of $1, or -1. (A variable, not output: no subshell.)
+find_entry() {
+  local i=0
+  entry_index=-1
+  while [ "$i" -lt "${#r_paths[@]}" ]; do
+    if [ "${r_paths[$i]}" = "$1" ]; then entry_index=$i; return 0; fi
+    i=$((i + 1))
+  done
+  return 1
+}
+
+record() {  # $1 = path, $2 = sha256, $3 = action, $4 = backup (or "")
+  if find_entry "$1"; then
+    r_hashes[$entry_index]="$2"; r_actions[$entry_index]="$3"; r_versions[$entry_index]="$version"
+    r_backups[$entry_index]="$4"
+  else
+    r_paths+=("$1"); r_hashes+=("$2"); r_actions+=("$3"); r_versions+=("$version"); r_backups+=("$4")
+  fi
+}
+
+write_receipt() {
+  mkdir -p "$receipt_dir"
+  local i=0 tab
+  tab="$(printf '\t')"
+  {
+    echo '{'
+    echo '  "about": "Written by the doorman installer: the files it installed, so a re-run and --uninstall touch only those. Commit it; do not edit it.",'
+    printf '  "toolsDir": "%s",\n' "$tools_dir"
+    echo '  "files": ['
+    # Sorted by path, in byte order, so the file is the same whichever installer wrote it.
+    while [ "$i" -lt "${#r_paths[@]}" ]; do
+      printf '%s\t    {"path": "%s", "sha256": "%s", "action": "%s", "version": "%s", "backup": "%s"}\n' \
+        "${r_paths[$i]}" "${r_paths[$i]}" "${r_hashes[$i]}" "${r_actions[$i]}" "${r_versions[$i]}" "${r_backups[$i]}"
+      i=$((i + 1))
+    done | LC_ALL=C sort -t "$tab" -k1,1 | cut -f2- | sed '$!s/$/,/'
+    echo '  ]'
+    echo '}'
+  } > "$receipt.tmp"
+  mv "$receipt.tmp" "$receipt"
+}
 
 
 # ---------------------------------------------------------------------------
@@ -131,46 +229,55 @@ remove_section() {
 
 if [ "$uninstall" -eq 1 ]; then
   removed=()
+  kept=()
   left=()
 
-  if [ -d "$dest" ]; then
-    for name in "${payload_names[@]}"; do
-      if [ -e "$dest/$name" ]; then
-        rm -rf "$dest/$name"
-        removed+=("$tools_dir/$name")
-      fi
-    done
-    if [ -e "$config_path" ]; then
-      rm -f "$config_path"
-      removed+=("$tools_dir/$config_name")
+  if ! load_receipt; then
+    if [ -e "$dest" ] || [ -e "$claude_skill_dest" ] || [ -e "$codex_skill_dest" ]; then
+      echo "No install receipt at .doorman/install-manifest.json, so nothing here can be shown to be" >&2
+      echo "doorman's — and nothing was removed. (Copies installed before 0.2.0 have no receipt.)" >&2
+      echo "Re-run the installer with --force to adopt this copy, then uninstall; or delete $tools_dir" >&2
+      echo "and the doorman section of CLAUDE.md and AGENTS.md yourself." >&2
+      exit 1
     fi
-    # Saved sessions are live credentials — removing the toolkit should not leave them behind.
-    for pattern in 'storageState*.json' 'sessionStorage*.json' 'auth-check*.png' 'shot-*.png'; do
-      while IFS= read -r found; do
-        [ -n "$found" ] || continue
-        rm -f "$found"
-        removed+=("$tools_dir/$(basename "$found")")
-      done < <(find "$dest" -maxdepth 1 -type f -name "$pattern" 2>/dev/null)
-    done
-    while IFS= read -r entry; do
-      [ -n "$entry" ] || continue
-      left+=("$tools_dir/$(basename "$entry")")
-    done < <(find "$dest" -mindepth 1 -maxdepth 1 2>/dev/null)
-    if [ "${#left[@]}" -eq 0 ]; then
-      prune_empty_dirs "$dest"
-    fi
+    echo "Nothing to remove — no doorman toolkit found in $workspace"
+    exit 0
   fi
+  receipt_tools="$(sed -n 's/.*"toolsDir": *"\([^"]*\)".*/\1/p' "$receipt" | head -n 1)"
+  receipt_tools="${receipt_tools:-$tools_dir}"
 
-  if [ -e "$claude_skill_dest" ]; then
-    rm -f "$claude_skill_dest"
-    removed+=(".claude/skills/get-past-login/SKILL.md")
-    prune_empty_dirs "$claude_skill_dir"
-  fi
-  if [ -e "$codex_skill_dest" ]; then
-    rm -f "$codex_skill_dest"
-    removed+=(".agents/skills/get-past-login/SKILL.md")
-    prune_empty_dirs "$codex_skill_dir"
-  fi
+  present=()
+  for rel in ${r_paths[@]+"${r_paths[@]}"}; do [ -e "$workspace/$rel" ] && present+=("$workspace/$rel"); done
+  hash_files ${present[@]+"${present[@]}"}
+  j=0
+  for target in ${present[@]+"${present[@]}"}; do
+    current="${HASHES[$j]}"; j=$((j + 1))
+    rel="${target#"$workspace"/}"
+    find_entry "$rel"
+    backup="${r_backups[$entry_index]}"
+    if [ "$current" != "${r_hashes[$entry_index]}" ]; then
+      kept+=("$rel")
+      continue
+    fi
+    rm -f "$target"
+    if [ -n "$backup" ] && [ -e "$workspace/$backup" ]; then
+      mv "$workspace/$backup" "$target"
+      removed+=("$rel (put back the version that was there before)")
+    else
+      removed+=("$rel")
+      prune_empty_dirs "${target%/*}"
+    fi
+  done
+
+  # Saved sessions are live credentials — removing the toolkit should not leave them behind.
+  session_dir="$workspace/$receipt_tools"
+  for pattern in 'storageState*.json' 'sessionStorage*.json' 'auth-check*.png' 'shot-*.png' '.*.tmp'; do
+    while IFS= read -r found; do
+      [ -n "$found" ] || continue
+      rm -f "$found"
+      removed+=("$receipt_tools/${found##*/}")
+    done < <(find "$session_dir" -maxdepth 1 -type f -name "$pattern" 2>/dev/null)
+  done
 
   claude_status=0
   remove_section "$claude_path" || claude_status=$?
@@ -186,13 +293,28 @@ if [ "$uninstall" -eq 1 ]; then
     2) removed+=("AGENTS.md (contained nothing else)") ;;
   esac
 
-  if [ "${#removed[@]}" -eq 0 ]; then
-    echo "Nothing to remove — no doorman toolkit found in $workspace"
-    exit 0
-  fi
+  # Whatever is still in the toolkit folder, other than the files kept above, wasn't installed here.
+  while IFS= read -r entry; do
+    [ -n "$entry" ] || continue
+    rel="$receipt_tools/${entry##*/}"
+    case " ${kept[*]-} " in *" $rel "*) continue ;; esac
+    left+=("$rel")
+  done < <(find "$session_dir" -mindepth 1 -maxdepth 1 2>/dev/null)
+  prune_empty_dirs "$session_dir"
+
+  # The receipt goes last, so an interrupted uninstall can simply be run again.
+  rm -f "$receipt"
+  prune_empty_dirs "$receipt_dir"
+
   echo ""
   echo "Removed:"
-  for line in "${removed[@]}"; do echo "  - $line"; done
+  for line in ${removed[@]+"${removed[@]}"}; do echo "  - $line"; done
+  [ "${#removed[@]}" -gt 0 ] || echo "  (nothing)"
+  if [ "${#kept[@]}" -gt 0 ]; then
+    echo ""
+    echo "Kept — changed since doorman installed them, so they may hold your work (delete them if not):"
+    for line in "${kept[@]}"; do echo "  - $line"; done
+  fi
   if [ "${#left[@]}" -gt 0 ]; then
     echo ""
     echo "Left in place (not installed by this script — delete manually if you want them gone):"
@@ -205,26 +327,81 @@ fi
 # Install
 # ---------------------------------------------------------------------------
 mkdir -p "$dest"
+load_receipt || true
+unchanged=0
 
-copy_one() {  # $1 = src file, $2 = dest file, $3 = label
-  if [ -e "$2" ] && [ "$force" -ne 1 ]; then
-    echo "  skip (exists): $3"
-  else
-    cp "$1" "$2"
-    echo "  copied: $3"
-  fi
+# What to install: source -> destination (workspace-relative).
+sources=(); targets=()
+for name in "${payload_names[@]}"; do
+  case "$name" in
+    doorman.config.example.json) sources+=("$config_dir/$name") ;;
+    *) sources+=("$scripts_dir/$name") ;;
+  esac
+  targets+=("$tools_dir/$name")
+done
+if [ "$install_skill" -eq 1 ]; then
+  sources+=("$script_root/get-past-login.SKILL.template.md" "$script_root/get-past-login.SKILL.template.md")
+  targets+=(".claude/skills/get-past-login/SKILL.md" ".agents/skills/get-past-login/SKILL.md")
+fi
+hash_files "${sources[@]}"; source_hashes=("${HASHES[@]}")
+existing=()
+for rel in "${targets[@]}"; do [ -e "$workspace/$rel" ] && existing+=("$workspace/$rel"); done
+hash_files ${existing[@]+"${existing[@]}"}; existing_hashes=(${HASHES[@]+"${HASHES[@]}"})
+
+current_hash_of() {  # sets current_hash for an existing workspace file, from the batch above
+  local i=0
+  current_hash=""
+  while [ "$i" -lt "${#existing[@]}" ]; do
+    if [ "${existing[$i]}" = "$1" ]; then current_hash="${existing_hashes[$i]}"; return; fi
+    i=$((i + 1))
+  done
 }
 
-for name in "${payload_names[@]}"; do
-  copy_one "$(payload_src "$name")" "$dest/$name" "$name"
-done
+# Install one managed file, deciding from the receipt whether whatever is already there is ours.
+install_file() {  # $1 = source, $2 = destination relative to the workspace, $3 = the source's hash
+  local src="$1" rel="$2" new_hash="$3" target="$workspace/$2" backup
+  if [ ! -e "$target" ]; then
+    [ -d "${target%/*}" ] || mkdir -p "${target%/*}"
+    cp "$src" "$target"
+    record "$rel" "$new_hash" created ""
+    echo "  copied: $rel"
+    return
+  fi
+  current_hash_of "$target"
+  find_entry "$rel" || true
+  if [ "$current_hash" = "$new_hash" ]; then
+    # Already exactly this version, so it is ours either way.
+    if [ "$entry_index" -ge 0 ]; then record "$rel" "$new_hash" "${r_actions[$entry_index]}" "${r_backups[$entry_index]}"
+    else record "$rel" "$new_hash" adopted ""; fi
+    unchanged=$((unchanged + 1))
+    return
+  fi
+  if [ "$entry_index" -ge 0 ] && [ "$current_hash" = "${r_hashes[$entry_index]}" ]; then
+    # Ours, and nobody has touched it since: safe to update.
+    cp "$src" "$target"
+    record "$rel" "$new_hash" updated "${r_backups[$entry_index]}"
+    echo "  updated: $rel"
+    return
+  fi
+  if [ "$force" -ne 1 ]; then
+    if [ "$entry_index" -ge 0 ]; then echo "  skip (changed since installed — --force replaces it, keeping a .bak): $rel"
+    else echo "  skip (exists, not installed by doorman — --force replaces it, keeping a .bak): $rel"; fi
+    return
+  fi
+  # Overwriting content doorman didn't write: keep it beside the new file first.
+  backup="$rel.$stamp.bak"
+  cp "$target" "$workspace/$backup"
+  cp "$src" "$target"
+  record "$rel" "$new_hash" replaced "$backup"
+  echo "  replaced: $rel (the previous file is kept as ${backup##*/})"
+}
 
-if [ "$install_skill" -eq 1 ]; then
-  mkdir -p "$claude_skill_dir"
-  copy_one "$script_root/get-past-login.SKILL.template.md" "$claude_skill_dest" ".claude/skills/get-past-login/SKILL.md (reads doorman.config.json)"
-  mkdir -p "$codex_skill_dir"
-  copy_one "$script_root/get-past-login.SKILL.template.md" "$codex_skill_dest" ".agents/skills/get-past-login/SKILL.md (reads doorman.config.json)"
-fi
+i=0
+while [ "$i" -lt "${#sources[@]}" ]; do
+  install_file "${sources[$i]}" "${targets[$i]}" "${source_hashes[$i]}"
+  i=$((i + 1))
+done
+[ "$unchanged" -eq 0 ] || echo "  up to date: $unchanged file(s)"
 
 # CLAUDE.md/AGENTS.md are written last, so a failure above never leaves a workspace advertising a
 # toolkit whose scripts didn't land. The text lives in installers/CLAUDE.section.md and
@@ -294,6 +471,7 @@ if [ "$reset_config" -eq 1 ] && [ -e "$config_path" ]; then
 fi
 have_node=0
 command -v node >/dev/null 2>&1 && have_node=1
+config_created=0
 if [ -e "$config_path" ]; then
   echo "Keeping your $tools_dir/$config_name (installs never change it; --reset-config replaces it)."
   if [ "$have_node" -eq 1 ]; then
@@ -316,7 +494,16 @@ else
     { echo '{'; echo '  "configured": false,'; tail -n +2 "$config_dir/doorman.config.example.json"; } > "$config_path"
     echo "  created $tools_dir/$config_name from the example, marked unconfigured — set baseUrl by hand."
   fi
+  config_created=1
 fi
+
+# Recorded as created, so an uninstall removes it only if it was never edited — which, for a config
+# someone has actually used, means it is kept.
+if [ "$config_created" -eq 1 ] && [ -e "$config_path" ]; then
+  hash_files "$config_path"
+  record "$tools_dir/$config_name" "${HASHES[0]}" created ""
+fi
+write_receipt
 
 if [ "$bootstrap" -eq 1 ]; then
   echo ""

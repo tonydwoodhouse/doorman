@@ -134,7 +134,7 @@ Flags (both installers):
 | `-Bootstrap` | `--bootstrap` | Run `npm install` + `npx playwright install chromium` after copying. |
 | `-Force` | `--force` | Overwrite existing toolkit files (otherwise they are skipped). Never touches `doorman.config.json`. |
 | `-ResetConfig` | `--reset-config` | Replace `doorman.config.json` with a freshly detected one; the old file is kept as `doorman.config.json.<timestamp>.bak`. |
-| `-Uninstall` | `--uninstall` | Remove what was installed (see below). |
+| `-Uninstall` | `--uninstall` | Remove what was installed, as recorded in `.doorman/install-manifest.json` (see below). |
 
 Vendored, everything lives together in `tools/doorman/`: the scripts, the config, and the session
 files — which the shipped `.gitignore` keeps out of source control. That last point is the trade-off
@@ -316,10 +316,26 @@ new version.
 ./installers/install.sh --workspace ~/src/my-app --uninstall
 ```
 
-Removes only what the installer added: the files it shipped, the marked `CLAUDE.md` and `AGENTS.md`
-sections (and either file itself if it held nothing else), the skills, and any saved session — those
-hold live credentials, so leaving them behind would be worse than deleting them. `node_modules`,
-your own scripts, and anything else in the folder are left in place and listed so you can decide.
+Removes only what the installer added, as recorded in its receipt,
+`.doorman/install-manifest.json`. Every file the installer writes is listed there with the SHA-256
+it was installed with (line endings ignored, so a `core.autocrlf` checkout still matches). Commit
+the receipt with the toolkit, so a teammate's uninstall works too. On uninstall:
+
+- a listed file that is still exactly as installed is deleted; one that has **changed** since is
+  **kept** and listed, since it may hold someone's work;
+- a file that `--force` replaced gets its original back from the `.bak` made at the time;
+- the marked `CLAUDE.md` and `AGENTS.md` sections go (and either file itself if it held nothing
+  else), and so does any saved session, since those hold live credentials;
+- directories are removed only once empty, and the receipt itself goes last.
+
+`node_modules`, your own scripts, and anything else in the folder are left in place and listed so
+you can decide. Without a receipt (a copy installed before 0.2.0), uninstall removes nothing and
+says so: re-run the installer with `--force` to adopt that copy first.
+
+The same receipt makes re-running the installer safe: files it installed and nobody has changed
+are updated in place; a file someone changed, or one it didn't put there (your own
+`.claude/skills/get-past-login/SKILL.md`, say), is skipped unless `--force` — which keeps a `.bak`
+of anything it overwrites that the installer didn't write.
 
 ## Notes
 

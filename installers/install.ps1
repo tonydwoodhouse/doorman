@@ -10,6 +10,11 @@
   copies per-developer artifacts (node_modules, storageState*.json, *.png). Existing files are
   skipped unless -Force is given, so re-running is safe.
 
+  Every file it writes is recorded, with its SHA-256, in <Workspace>/.doorman/install-manifest.json
+  (the receipt; commit it with the toolkit). A re-run updates the files it installed and that nobody
+  has changed since; a file someone changed, or one doorman didn't put there, is skipped unless
+  -Force — and -Force keeps a .bak of anything it overwrites that doorman didn't write.
+
   doorman.config.json is yours, not the installer's: it is created once (by detect.mjs, which fills
   in baseUrl) and never overwritten after that — not even by -Force. An upgrade checks it and
   reports problems instead. -ResetConfig replaces it, keeping the old one as a timestamped .bak.
@@ -37,9 +42,11 @@
   doorman.config.json.<timestamp>.bak.
 
 .PARAMETER Uninstall
-  Remove what this installer added: the toolkit files, the CLAUDE.md and AGENTS.md sections, the
-  skills, and any saved session (which holds live credentials). Files it did not install are left
-  in place and reported. Nothing else in the workspace is touched.
+  Remove what this installer added, as recorded in <Workspace>/.doorman/install-manifest.json: each
+  listed file that is still exactly as installed (a changed file is kept and reported; a file
+  -Force replaced gets its original back), the CLAUDE.md and AGENTS.md sections, and any saved
+  session (which holds live credentials). Directories go only once empty. Without a receipt it
+  removes nothing.
 
 .EXAMPLE
   ./install.ps1 -Workspace C:\src\my-app -InstallSkill -Bootstrap
@@ -64,6 +71,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# Normalized, because it is also the prefix of every path in the receipt.
+$ToolsDir = (($ToolsDir -replace '\\', '/') -replace '^\./', '') -replace '/+$', ''
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path   # installers/ — also where the
                                                                   # section/skill templates live
 $repoRoot = Split-Path -Parent $scriptRoot
@@ -96,6 +105,82 @@ $payload = @(
 ) + [pscustomobject]@{ Name = 'doorman.config.example.json'; FullName = (Join-Path $configDir 'doorman.config.example.json') }
 $configName = 'doorman.config.json'
 $configPath = Join-Path $dest $configName
+
+# ---------------------------------------------------------------------------
+# The receipt: what the installer wrote, so a re-run and -Uninstall can tell its files from yours
+# ---------------------------------------------------------------------------
+# One entry per line, in the same fixed layout install.sh writes, so either installer can update or
+# remove what the other installed.
+$receiptDir = Join-Path $Workspace '.doorman'
+$receiptPath = Join-Path $receiptDir 'install-manifest.json'
+$version = try { (Get-Content -Raw (Join-Path $repoRoot '.claude-plugin/plugin.json') | ConvertFrom-Json).version } catch { 'unknown' }
+$stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+$receiptEntries = [System.Collections.Generic.List[object]]::new()
+$receiptTools = $null
+
+# Carriage returns are ignored, so a checkout that converts line endings (core.autocrlf) still counts
+# as unchanged — and the hash matches the one install.sh computes.
+function Get-ContentHash([string]$path) {
+  $bytes = [System.IO.File]::ReadAllBytes($path)
+  if ([Array]::IndexOf($bytes, [byte]13) -ge 0) {
+    $kept = [System.Collections.Generic.List[byte]]::new($bytes.Length)
+    foreach ($b in $bytes) { if ($b -ne 13) { $kept.Add($b) } }
+    $bytes = $kept.ToArray()
+  }
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  try { return ([System.BitConverter]::ToString($sha.ComputeHash($bytes)) -replace '-', '').ToLowerInvariant() }
+  finally { $sha.Dispose() }
+}
+
+function Read-Receipt {
+  if (-not (Test-Path $receiptPath)) { return $false }
+  $data = Get-Content -Raw -Path $receiptPath | ConvertFrom-Json
+  $script:receiptTools = $data.toolsDir
+  foreach ($f in @($data.files)) {
+    if ($null -eq $f) { continue }
+    $receiptEntries.Add([pscustomobject]@{
+      path = $f.path; sha256 = $f.sha256; action = $f.action; version = $f.version; backup = [string]$f.backup
+    })
+  }
+  return $true
+}
+
+function Find-Entry([string]$rel) {
+  foreach ($entry in $receiptEntries) { if ($entry.path -eq $rel) { return $entry } }
+  return $null
+}
+
+function Set-Entry([string]$rel, [string]$hash, [string]$action, [string]$backup) {
+  $entry = Find-Entry $rel
+  if ($entry) {
+    $entry.sha256 = $hash; $entry.action = $action; $entry.version = $version; $entry.backup = $backup
+  } else {
+    $receiptEntries.Add([pscustomobject]@{ path = $rel; sha256 = $hash; action = $action; version = $version; backup = $backup })
+  }
+}
+
+function Write-Receipt {
+  New-Item -ItemType Directory -Force -Path $receiptDir | Out-Null
+  $lines = [System.Collections.Generic.List[string]]::new()
+  $lines.Add('{')
+  $lines.Add('  "about": "Written by the doorman installer: the files it installed, so a re-run and --uninstall touch only those. Commit it; do not edit it.",')
+  $lines.Add("  ""toolsDir"": ""$ToolsDir"",")
+  $lines.Add('  "files": [')
+  # Sorted by path, ordinal, so the file is the same whichever installer wrote it.
+  # (List.Sort in place: [Array]::Sort would be handed copies by PowerShell and sort nothing.)
+  $entries = [System.Collections.Generic.List[object]]::new($receiptEntries)
+  $entries.Sort([System.Comparison[object]]{ param($x, $y) [string]::CompareOrdinal($x.path, $y.path) })
+  for ($i = 0; $i -lt $entries.Count; $i++) {
+    $e = $entries[$i]
+    $comma = if ($i -lt $entries.Count - 1) { ',' } else { '' }
+    $lines.Add("    {""path"": ""$($e.path)"", ""sha256"": ""$($e.sha256)"", ""action"": ""$($e.action)"", ""version"": ""$($e.version)"", ""backup"": ""$($e.backup)""}$comma")
+  }
+  $lines.Add('  ]')
+  $lines.Add('}')
+  # LF and no BOM, byte for byte what install.sh writes.
+  Set-Content -Path "$receiptPath.tmp" -Value (($lines -join "`n") + "`n") -Encoding utf8NoBOM -NoNewline
+  Move-Item -Force "$receiptPath.tmp" $receiptPath
+}
 
 # ---------------------------------------------------------------------------
 # Uninstall
@@ -136,38 +221,46 @@ if ($Uninstall) {
     return 0
   }
 
-  if (Test-Path $dest) {
-    foreach ($item in $payload) {
-      $target = Join-Path $dest $item.Name
-      if (Test-Path $target) {
-        Remove-Item $target -Force -Recurse
-        $removed.Add("$ToolsDir/$($item.Name)")
-      }
+  if (-not (Read-Receipt)) {
+    if ((Test-Path $dest) -or (Test-Path $claudeSkillDest) -or (Test-Path $codexSkillDest)) {
+      [Console]::Error.WriteLine(@"
+No install receipt at .doorman/install-manifest.json, so nothing here can be shown to be
+doorman's — and nothing was removed. (Copies installed before 0.2.0 have no receipt.)
+Re-run the installer with -Force to adopt this copy, then uninstall; or delete $ToolsDir
+and the doorman section of CLAUDE.md and AGENTS.md yourself.
+"@)
+      exit 1
     }
-    if (Test-Path $configPath) {
-      Remove-Item $configPath -Force
-      $removed.Add("$ToolsDir/$configName")
+    Write-Host "Nothing to remove — no doorman toolkit found in $Workspace" -ForegroundColor Yellow
+    return
+  }
+  $toolsRel = if ($receiptTools) { $receiptTools } else { $ToolsDir }
+  $kept = [System.Collections.Generic.List[string]]::new()
+
+  foreach ($entry in $receiptEntries) {
+    $target = Join-Path $Workspace $entry.path
+    if (-not (Test-Path $target)) { continue }
+    if ((Get-ContentHash $target) -ne $entry.sha256) { $kept.Add($entry.path); continue }
+    Remove-Item $target -Force
+    $backupPath = if ($entry.backup) { Join-Path $Workspace $entry.backup } else { $null }
+    if ($backupPath -and (Test-Path $backupPath)) {
+      Move-Item $backupPath $target
+      $removed.Add("$($entry.path) (put back the version that was there before)")
+    } else {
+      $removed.Add($entry.path)
+      Remove-EmptyDirs (Split-Path -Parent $target)
     }
-    # Saved sessions are live credentials — removing the toolkit should not leave them behind.
-    foreach ($pattern in @('storageState*.json', 'sessionStorage*.json', 'auth-check*.png', 'shot-*.png')) {
-      Get-ChildItem -Path $dest -Filter $pattern -File -ErrorAction SilentlyContinue | ForEach-Object {
-        Remove-Item $_.FullName -Force
-        $removed.Add("$ToolsDir/$($_.Name)")
-      }
-    }
-    Get-ChildItem -Path $dest -Force | ForEach-Object { $left.Add("$ToolsDir/$($_.Name)") }
-    if ($left.Count -eq 0) { Remove-EmptyDirs $dest }
   }
 
-  if (Test-Path $claudeSkillDest) {
-    Remove-Item $claudeSkillDest -Force
-    $removed.Add('.claude/skills/get-past-login/SKILL.md')
-    Remove-EmptyDirs $claudeSkillDir
-  }
-  if (Test-Path $codexSkillDest) {
-    Remove-Item $codexSkillDest -Force
-    $removed.Add('.agents/skills/get-past-login/SKILL.md')
-    Remove-EmptyDirs $codexSkillDir
+  # Saved sessions are live credentials — removing the toolkit should not leave them behind.
+  $sessionDir = Join-Path $Workspace $toolsRel
+  if (Test-Path $sessionDir) {
+    foreach ($pattern in @('storageState*.json', 'sessionStorage*.json', 'auth-check*.png', 'shot-*.png', '.*.tmp')) {
+      Get-ChildItem -Path $sessionDir -Filter $pattern -File -Force -ErrorAction SilentlyContinue | ForEach-Object {
+        Remove-Item $_.FullName -Force
+        $removed.Add("$toolsRel/$($_.Name)")
+      }
+    }
   }
 
   $claudeStatus = Remove-Section $claudePath 'CLAUDE.md'
@@ -181,12 +274,26 @@ if ($Uninstall) {
     2 { $removed.Add('AGENTS.md (contained nothing else)') }
   }
 
-  if ($removed.Count -eq 0) {
-    Write-Host "Nothing to remove — no doorman toolkit found in $Workspace" -ForegroundColor Yellow
-    return
+  # Whatever is still in the toolkit folder, other than the files kept above, wasn't installed here.
+  if (Test-Path $sessionDir) {
+    Get-ChildItem -Path $sessionDir -Force | ForEach-Object {
+      $rel = "$toolsRel/$($_.Name)"
+      if (-not $kept.Contains($rel)) { $left.Add($rel) }
+    }
+    Remove-EmptyDirs $sessionDir
   }
+
+  # The receipt goes last, so an interrupted uninstall can simply be run again.
+  Remove-Item $receiptPath -Force
+  Remove-EmptyDirs $receiptDir
+
   Write-Host "`nRemoved:" -ForegroundColor Cyan
   foreach ($line in $removed) { Write-Host "  - $line" }
+  if ($removed.Count -eq 0) { Write-Host '  (nothing)' }
+  if ($kept.Count -gt 0) {
+    Write-Host "`nKept — changed since doorman installed them, so they may hold your work (delete them if not):" -ForegroundColor DarkYellow
+    foreach ($line in $kept) { Write-Host "  - $line" }
+  }
   if ($left.Count -gt 0) {
     Write-Host "`nLeft in place (not installed by this script — delete manually if you want them gone):" -ForegroundColor DarkYellow
     foreach ($line in $left) { Write-Host "  - $line" }
@@ -210,36 +317,57 @@ $agentsSection = Get-Section 'AGENTS.section.md'
 
 New-Item -ItemType Directory -Force -Path $dest | Out-Null
 
-$copied = 0; $skipped = 0
+[void](Read-Receipt)
+$script:unchanged = 0
+
+# Install one managed file, deciding from the receipt whether whatever is already there is ours.
+function Install-ManagedFile([string]$src, [string]$rel) {
+  $target = Join-Path $Workspace $rel
+  $newHash = Get-ContentHash $src
+  if (-not (Test-Path $target)) {
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
+    Copy-Item $src $target -Force
+    Set-Entry $rel $newHash 'created' ''
+    Write-Host "  copied: $rel" -ForegroundColor Green
+    return
+  }
+  $current = Get-ContentHash $target
+  $entry = Find-Entry $rel
+  if ($current -eq $newHash) {
+    # Already exactly this version, so it is ours either way.
+    if ($entry) { Set-Entry $rel $newHash $entry.action $entry.backup } else { Set-Entry $rel $newHash 'adopted' '' }
+    $script:unchanged++
+    return
+  }
+  if ($entry -and $current -eq $entry.sha256) {
+    # Ours, and nobody has touched it since: safe to update.
+    Copy-Item $src $target -Force
+    Set-Entry $rel $newHash 'updated' $entry.backup
+    Write-Host "  updated: $rel" -ForegroundColor Green
+    return
+  }
+  if (-not $Force) {
+    $why = if ($entry) { 'changed since installed' } else { 'exists, not installed by doorman' }
+    Write-Host "  skip ($why — -Force replaces it, keeping a .bak): $rel" -ForegroundColor DarkYellow
+    return
+  }
+  # Overwriting content doorman didn't write: keep it beside the new file first.
+  $backup = "$rel.$stamp.bak"
+  Copy-Item $target (Join-Path $Workspace $backup) -Force
+  Copy-Item $src $target -Force
+  Set-Entry $rel $newHash 'replaced' $backup
+  Write-Host "  replaced: $rel (the previous file is kept as $(Split-Path -Leaf $backup))" -ForegroundColor Yellow
+}
+
 foreach ($item in $payload) {
-  $target = Join-Path $dest $item.Name
-  if ((Test-Path $target) -and -not $Force) {
-    Write-Host "  skip (exists): $($item.Name)" -ForegroundColor DarkYellow
-    $skipped++
-  } else {
-    Copy-Item $item.FullName $target -Force
-    Write-Host "  copied: $($item.Name)" -ForegroundColor Green
-    $copied++
-  }
+  Install-ManagedFile $item.FullName "$ToolsDir/$($item.Name)"
 }
-
 if ($InstallSkill) {
-  New-Item -ItemType Directory -Force -Path $claudeSkillDir | Out-Null
-  if ((Test-Path $claudeSkillDest) -and -not $Force) {
-    Write-Host "  skip (exists): .claude/skills/get-past-login/SKILL.md" -ForegroundColor DarkYellow
-  } else {
-    Copy-Item (Join-Path $scriptRoot 'get-past-login.SKILL.template.md') $claudeSkillDest -Force
-    Write-Host "  copied: .claude/skills/get-past-login/SKILL.md (reads doorman.config.json)" -ForegroundColor Green
-  }
-
-  New-Item -ItemType Directory -Force -Path $codexSkillDir | Out-Null
-  if ((Test-Path $codexSkillDest) -and -not $Force) {
-    Write-Host "  skip (exists): .agents/skills/get-past-login/SKILL.md" -ForegroundColor DarkYellow
-  } else {
-    Copy-Item (Join-Path $scriptRoot 'get-past-login.SKILL.template.md') $codexSkillDest -Force
-    Write-Host "  copied: .agents/skills/get-past-login/SKILL.md (reads doorman.config.json)" -ForegroundColor Green
-  }
+  $skillTemplate = Join-Path $scriptRoot 'get-past-login.SKILL.template.md'
+  Install-ManagedFile $skillTemplate '.claude/skills/get-past-login/SKILL.md'
+  Install-ManagedFile $skillTemplate '.agents/skills/get-past-login/SKILL.md'
 }
+if ($script:unchanged -gt 0) { Write-Host "  up to date: $($script:unchanged) file(s)" }
 
 # CLAUDE.md/AGENTS.md are written last, so a failure above never leaves a workspace advertising a
 # toolkit whose scripts didn't land.
@@ -277,6 +405,7 @@ if ($ResetConfig -and (Test-Path $configPath)) {
   Write-Host "  backed up: $ToolsDir/$configName -> $(Split-Path -Leaf $backup)" -ForegroundColor DarkYellow
 }
 $haveNode = [bool](Get-Command node -ErrorAction SilentlyContinue)
+$configCreated = $false
 if (Test-Path $configPath) {
   Write-Host "Keeping your $ToolsDir/$configName (installs never change it; -ResetConfig replaces it)." -ForegroundColor Cyan
   if ($haveNode) {
@@ -313,7 +442,15 @@ if (Test-Path $configPath) {
     Set-Content -Path $configPath -Value (($configLines -join "`n") + "`n") -Encoding utf8NoBOM -NoNewline
     Write-Host "  created $ToolsDir/$configName from the example, marked unconfigured — set baseUrl by hand." -ForegroundColor DarkYellow
   }
+  $configCreated = $true
 }
+
+# Recorded as created, so an uninstall removes it only if it was never edited — which, for a config
+# someone has actually used, means it is kept.
+if ($configCreated -and (Test-Path $configPath)) {
+  Set-Entry "$ToolsDir/$configName" (Get-ContentHash $configPath) 'created' ''
+}
+Write-Receipt
 
 if ($Bootstrap) {
   Write-Host "`nBootstrapping (npm install + playwright chromium)..." -ForegroundColor Cyan
@@ -324,7 +461,7 @@ if ($Bootstrap) {
   } finally { Pop-Location }
 }
 
-Write-Host "`n✅ Installed to $dest  ($copied copied, $skipped skipped)" -ForegroundColor Cyan
+Write-Host "`n✅ Installed to $dest" -ForegroundColor Cyan
 Write-Host @"
 
 Next steps (or just ask your AI assistant to do them):

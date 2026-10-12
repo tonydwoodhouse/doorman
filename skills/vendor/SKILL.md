@@ -53,7 +53,9 @@ The installer also writes a marked `doorman` section into the project's `CLAUDE.
 skips files that already exist unless `--force`, and runs URL detection when it creates the config.
 An existing `doorman.config.json` is never overwritten — not even with `--force` — only checked;
 `--reset-config` replaces it (keeping a `.bak`) if that's genuinely what the developer wants.
-`--uninstall` removes exactly what it added, including any saved session.
+Every file it writes is recorded in `.doorman/install-manifest.json` (commit it). `--uninstall`
+removes only files listed there that are unchanged since install — changed ones are kept and
+reported — plus the instruction sections and any saved session.
 
 Afterwards, run the commands from `tools/doorman/` (`node ensure.mjs`, `node shot.mjs /route`) —
 the vendored copy resolves its config and session files beside itself.

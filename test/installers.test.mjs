@@ -4,6 +4,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile, execFileSync } from 'child_process';
+import { createHash } from 'crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs';
 import { join, resolve } from 'path';
 import { REPO, tempDir } from './helpers.mjs';
@@ -46,6 +47,7 @@ const SHELLS = [
 ];
 
 const FORCE = { sh: '--force', ps: '-Force' };
+const SKILL = { sh: '--install-skill', ps: '-InstallSkill' };
 const RESET = { sh: '--reset-config', ps: '-ResetConfig' };
 const UNINSTALL = { sh: '--uninstall', ps: '-Uninstall' };
 
@@ -59,6 +61,11 @@ function install(shell, ws, flags = []) {
     });
   });
 }
+
+/** The receipt's hash: SHA-256 with carriage returns ignored, as both installers compute it. */
+const receiptHash = (text) => createHash('sha256').update(text.replace(/\r/g, '')).digest('hex');
+const receiptOf = (ws) => readFileSync(join(ws, '.doorman', 'install-manifest.json'), 'utf8');
+const entryFor = (ws, path) => JSON.parse(receiptOf(ws)).files.find((f) => f.path === path);
 
 /** A fresh workspace that looks like a project: a Git repo with a package.json. */
 function workspace() {
@@ -157,7 +164,7 @@ for (const shell of SHELLS) {
         writeFileSync(join(tools, 'ensure.mjs'), '// edited\n');
         const result = await install(shell, ws);
         assert.equal(result.code, 0, result.output);
-        assert.match(result.stdout, /skip \(exists\): ensure\.mjs/);
+        assert.match(result.stdout, /skip \(changed since installed[^\n]*\): tools\/doorman\/ensure\.mjs/);
         assert.equal(readFileSync(join(tools, 'ensure.mjs'), 'utf8'), '// edited\n');
       } finally {
         cleanup();
@@ -203,9 +210,143 @@ for (const shell of SHELLS) {
         assert.equal(result.code, 0, result.output);
         assert.ok(!existsSync(join(ws, 'tools')), 'the toolkit directory (and its empty parent) should be gone');
         assert.ok(!existsSync(join(ws, 'CLAUDE.md')));
+        assert.ok(!existsSync(join(ws, '.doorman')), 'the receipt (and its empty folder) should be gone');
+      } finally {
+        cleanup();
+      }
+    });
+
+    test('the receipt records every installed file with the hash it was installed with', async () => {
+      const { ws, tools, cleanup } = workspace();
+      try {
+        assert.equal((await install(shell, ws, [SKILL])).code, 0);
+        const receipt = JSON.parse(receiptOf(ws));
+        assert.equal(receipt.toolsDir, 'tools/doorman');
+        const ensure = entryFor(ws, 'tools/doorman/ensure.mjs');
+        assert.equal(ensure.sha256, receiptHash(readFileSync(join(tools, 'ensure.mjs'), 'utf8')));
+        assert.equal(ensure.action, 'created');
+        assert.equal(ensure.version, JSON.parse(readFileSync(join(REPO, '.claude-plugin', 'plugin.json'), 'utf8')).version);
+        assert.ok(entryFor(ws, '.claude/skills/get-past-login/SKILL.md'));
+        assert.ok(entryFor(ws, 'tools/doorman/doorman.config.json'), 'the config it created is recorded too');
+      } finally {
+        cleanup();
+      }
+    });
+
+    test("uninstall keeps the project's own SKILL.md and a modified script (acceptance)", async () => {
+      const { ws, tools, cleanup } = workspace();
+      try {
+        const ownSkill = join(ws, '.claude', 'skills', 'get-past-login', 'SKILL.md');
+        mkdirSync(join(ownSkill, '..'), { recursive: true });
+        writeFileSync(ownSkill, '# our own skill\n');
+
+        const first = await install(shell, ws, [SKILL]);
+        assert.equal(first.code, 0, first.output);
+        assert.match(first.stdout, /skip \(exists, not installed by doorman[^\n]*\): \.claude\/skills\/get-past-login\/SKILL\.md/);
+        assert.equal(readFileSync(ownSkill, 'utf8'), '# our own skill\n');
+        writeFileSync(join(tools, 'shot.mjs'), '// my local tweak\n');
+
+        const result = await install(shell, ws, [UNINSTALL]);
+        assert.equal(result.code, 0, result.output);
+        assert.equal(readFileSync(ownSkill, 'utf8'), '# our own skill\n', 'a file doorman never installed was touched');
+        assert.equal(readFileSync(join(tools, 'shot.mjs'), 'utf8'), '// my local tweak\n');
+        assert.match(result.stdout, /Kept[^\n]*\n[\s\S]*tools\/doorman\/shot\.mjs/);
+        assert.ok(!existsSync(join(tools, 'ensure.mjs')), 'an unmodified installed file should be removed');
+        // doorman's copy of the Codex skill was installed and unmodified, so it goes.
+        assert.ok(!existsSync(join(ws, '.agents')));
+      } finally {
+        cleanup();
+      }
+    });
+
+    test('--force backs up a file doorman did not write, and uninstall puts it back', async () => {
+      const { ws, cleanup } = workspace();
+      try {
+        const ownSkill = join(ws, '.claude', 'skills', 'get-past-login', 'SKILL.md');
+        mkdirSync(join(ownSkill, '..'), { recursive: true });
+        writeFileSync(ownSkill, '# our own skill\n');
+
+        const result = await install(shell, ws, [SKILL, FORCE]);
+        assert.equal(result.code, 0, result.output);
+        assert.match(result.stdout, /replaced: \.claude\/skills\/get-past-login\/SKILL\.md \(the previous file is kept as SKILL\.md\.\d{8}-\d{6}\.bak\)/);
+        const entry = entryFor(ws, '.claude/skills/get-past-login/SKILL.md');
+        assert.equal(entry.action, 'replaced');
+        assert.equal(readFileSync(join(ws, entry.backup), 'utf8'), '# our own skill\n');
+
+        const removal = await install(shell, ws, [UNINSTALL]);
+        assert.equal(removal.code, 0, removal.output);
+        assert.equal(readFileSync(ownSkill, 'utf8'), '# our own skill\n');
+        assert.ok(!existsSync(join(ws, entry.backup)), 'the backup should have been moved back');
+      } finally {
+        cleanup();
+      }
+    });
+
+    test('a re-run updates installed files nobody has changed, without --force', async () => {
+      const { ws, tools, cleanup } = workspace();
+      try {
+        assert.equal((await install(shell, ws)).code, 0);
+        // Pretend an older version was installed: different content, and a receipt that says so.
+        const older = '// doorman 0.1.x\r\n';
+        writeFileSync(join(tools, 'ensure.mjs'), older);
+        const receiptPath = join(ws, '.doorman', 'install-manifest.json');
+        const current = entryFor(ws, 'tools/doorman/ensure.mjs').sha256;
+        writeFileSync(receiptPath, receiptOf(ws).replace(current, receiptHash(older)));
+
+        const result = await install(shell, ws);
+        assert.equal(result.code, 0, result.output);
+        assert.match(result.stdout, /updated: tools\/doorman\/ensure\.mjs/);
+        assert.equal(readFileSync(join(tools, 'ensure.mjs'), 'utf8'), readFileSync(join(REPO, 'scripts', 'ensure.mjs'), 'utf8'));
+        assert.equal(entryFor(ws, 'tools/doorman/ensure.mjs').action, 'updated');
+      } finally {
+        cleanup();
+      }
+    });
+
+    test('without a receipt, uninstall removes nothing and says why', async () => {
+      const { ws, tools, cleanup } = workspace();
+      try {
+        mkdirSync(tools, { recursive: true });
+        writeFileSync(join(tools, 'ensure.mjs'), '// installed by 0.1.0\n');
+        const result = await install(shell, ws, [UNINSTALL]);
+        assert.equal(result.code, 1, result.output);
+        assert.match(result.stderr, /No install receipt/);
+        assert.ok(existsSync(join(tools, 'ensure.mjs')));
       } finally {
         cleanup();
       }
     });
   });
 }
+
+const [sh, ps] = SHELLS;
+describe('install.sh and install.ps1 together', { skip: !(sh.available && ps.available) && 'needs both bash and PowerShell 7' }, () => {
+  test('write byte-identical receipts', async () => {
+    const a = workspace();
+    const b = workspace();
+    try {
+      assert.equal((await install(sh, a.ws, [SKILL])).code, 0);
+      assert.equal((await install(ps, b.ws, [SKILL])).code, 0);
+      // The config is detected per workspace, so its hash can differ; everything else must match.
+      const strip = (text) => text.split('\n').filter((line) => !line.includes('doorman.config.json"')).join('\n');
+      assert.equal(strip(receiptOf(b.ws)), strip(receiptOf(a.ws)));
+    } finally {
+      a.cleanup();
+      b.cleanup();
+    }
+  });
+
+  test('either can uninstall what the other installed', async () => {
+    for (const [installer, remover] of [[sh, ps], [ps, sh]]) {
+      const { ws, cleanup } = workspace();
+      try {
+        assert.equal((await install(installer, ws, [SKILL])).code, 0);
+        const result = await install(remover, ws, [UNINSTALL]);
+        assert.equal(result.code, 0, result.output);
+        assert.deepEqual(readdirSync(ws).filter((f) => f !== '.git'), ['package.json'], result.output);
+      } finally {
+        cleanup();
+      }
+    }
+  });
+});
