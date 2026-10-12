@@ -7,6 +7,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync }
 import { hostname } from 'os';
 import { delimiter, join } from 'path';
 import { makeProject, runScript } from './helpers.mjs';
+import { installInProgress } from '../scripts/install-lock.mjs';
 
 const project = makeProject('http://127.0.0.1:9');
 const deps = join(project.root, 'data', 'deps');
@@ -124,6 +125,15 @@ describe('install-deps lock', () => {
     assert.equal(result.code, 0, result.output);
     assert.match(result.stdout, new RegExp(`another install is already running \\(pid ${process.pid}`));
     assert.equal(npmInstalls(), 1, 'it should install once the lock was released, since nothing was stamped');
+  });
+
+  test('only a live lock counts as an install in progress (what playwright.mjs reports)', () => {
+    writeLock({ pid: process.pid, startedAt: new Date().toISOString() });
+    assert.equal(installInProgress(deps), true);
+    writeLock({ pid: DEAD_PID, startedAt: new Date().toISOString() });
+    assert.equal(installInProgress(deps), false);
+    rmSync(lock);
+    assert.equal(installInProgress(deps), false);
   });
 
   test('a failed install still releases the lock', async () => {

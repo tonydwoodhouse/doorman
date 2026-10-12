@@ -25,7 +25,7 @@
 // one — so it is cleared, with a one-line note, and the install goes ahead.
 import { spawn } from 'child_process';
 import { createHash } from 'crypto';
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { hostname } from 'os';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
@@ -33,10 +33,11 @@ import { fileURLToPath } from 'url';
 // shell (which the host gives no plugin variables) finds the same one. Importing it is what makes
 // the hook and every later script agree on where Playwright lives.
 import { DEPS_DIR, SCRIPT_DIR as SCRIPTS_DIR } from './paths.mjs';
+import { lockPathIn, readLock as readLockAt, staleReason } from './install-lock.mjs';
 
 const SELF = fileURLToPath(import.meta.url);
 const STAMP = join(DEPS_DIR, '.installed');
-const RUNNING = join(DEPS_DIR, '.installing');
+const RUNNING = lockPathIn(DEPS_DIR);
 const LOG = join(DEPS_DIR, 'install.log');
 
 const mode = process.argv[2] ?? null;
@@ -71,60 +72,8 @@ function isCurrent(hash) {
 // The install lock
 // ---------------------------------------------------------------------------
 
-// Longer than any real install, even a slow first Chromium download. A lock older than this is
-// stale even if a process with its PID is running: by then that PID is likely someone else's.
-const LOCK_MAX_AGE_MS = 2 * 60 * 60 * 1000;
 const LOCK_POLL_MS = 1000;
-
-/** The current lock as { pid, host, startedAt (ms), raw }, or null when there is none. */
-function readLock() {
-  let raw;
-  try {
-    raw = readFileSync(RUNNING, 'utf8');
-  } catch {
-    return null;
-  }
-  let lock = null;
-  try {
-    lock = JSON.parse(raw);
-  } catch {
-    // 0.1.0 wrote a bare timestamp; anything else unreadable is judged by the file's age.
-  }
-  if (lock && typeof lock === 'object') {
-    return { pid: lock.pid, host: lock.host, startedAt: Date.parse(lock.startedAt), raw };
-  }
-  let startedAt = Date.parse(raw.trim());
-  if (Number.isNaN(startedAt)) {
-    try {
-      startedAt = statSync(RUNNING).mtimeMs;
-    } catch {
-      return null;
-    }
-  }
-  return { pid: null, host: null, startedAt, raw };
-}
-
-function pidAlive(pid) {
-  try {
-    process.kill(pid, 0); // signal 0: existence check only
-    return true;
-  } catch (e) {
-    return e.code === 'EPERM'; // exists, just not ours to signal
-  }
-}
-
-/** Why `lock` is stale, or null while its holder may still be working. */
-function staleReason(lock) {
-  const age = Date.now() - lock.startedAt;
-  if (!Number.isFinite(age) || age > LOCK_MAX_AGE_MS) {
-    return `it was taken ${Number.isFinite(age) ? `${Math.round(age / 60000)} minutes ago` : 'at an unknown time'}`;
-  }
-  // A PID only means something on the machine that wrote it (a home directory can be shared).
-  if (lock.host === hostname() && Number.isInteger(lock.pid) && !pidAlive(lock.pid)) {
-    return `process ${lock.pid} is no longer running`;
-  }
-  return null;
-}
+const readLock = () => readLockAt(RUNNING);
 
 /**
  * Clear `lock` if it is stale. Re-reads first and only removes the file if it is still that same
