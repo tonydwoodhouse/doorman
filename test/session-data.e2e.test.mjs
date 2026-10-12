@@ -25,8 +25,10 @@ describe('session files from a sign-in through a separate identity provider', ()
       authenticatedSelector: '[data-testid=account-menu]',
       settleTimeoutMs: 300,
     });
-    capture = await runScript('login-once.mjs', [], { env: project.env });
+    // Created beforehand with default permissions, as an older version would have left it.
     dir = await sessionDir(project.env);
+    mkdirSync(dir, { recursive: true });
+    capture = await runScript('login-once.mjs', [], { env: project.env });
   });
   after(async () => {
     project?.cleanup();
@@ -41,7 +43,7 @@ describe('session files from a sign-in through a separate identity provider', ()
     for (const { value } of state.cookies) assert.ok(!capture.output.includes(value), 'a cookie value was printed');
   });
 
-  test('the session file and directory are owner-only, with no temp files left behind', () => {
+  test('the session file and directory are owner-only (even a pre-existing directory), with no temp files left', () => {
     assert.deepEqual(readdirSync(dir).filter((f) => f.endsWith('.tmp')), []);
     const file = join(dir, 'storageState.json');
     if (process.platform === 'win32') {

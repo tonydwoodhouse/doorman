@@ -396,7 +396,8 @@ export const profile = profileName;
 export const OUTPUT_DIR = ensureDir(OUT_DIR);
 // The session directory is owner-only — unless it is the vendored toolkit folder itself, which is
 // shared project content; there each session file is restricted individually instead.
-export const SESSION_PATH_DIR = SESSION_DIR === SCRIPT_DIR ? SESSION_DIR : ensurePrivateDir(SESSION_DIR);
+export const SESSION_DIR_IS_PRIVATE = SESSION_DIR !== SCRIPT_DIR;
+export const SESSION_PATH_DIR = SESSION_DIR_IS_PRIVATE ? ensurePrivateDir(SESSION_DIR) : SESSION_DIR;
 noteProjectPath();
 
 export const STATE_PATH = join(SESSION_DIR, `storageState${stateSuffix}.json`);

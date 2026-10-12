@@ -5,9 +5,11 @@
 // read, typed or stored by the toolkit — but the saved session is itself a bearer credential while
 // it lasts, so it is written owner-only, kept out of Git, and trimmed to `captureOrigins`.
 import { relative } from 'path';
-import { SESSION_STORAGE_PATH, STATE_PATH, config, profile, stripBasePath } from './config.mjs';
+import {
+  SESSION_DIR_IS_PRIVATE, SESSION_PATH_DIR, SESSION_STORAGE_PATH, STATE_PATH, config, profile, stripBasePath,
+} from './config.mjs';
 import { describeRow, filterState, originWarnings, summarizeState } from './origins.mjs';
-import { gitExposure, writePrivateFile } from './secure-files.mjs';
+import { gitExposure, restrictToOwner, writePrivateFile } from './secure-files.mjs';
 import {
   EXIT, describeSession, goto, launchBrowser, listIndexedDBNames, resolveTarget, saveSessionStorage,
 } from './session.mjs';
@@ -63,6 +65,10 @@ export async function captureSession() {
   } = config;
 
   if (refuseIfTrackable()) return EXIT.ENVIRONMENT;
+  // Every check makes sure the session directory exists, but on Windows only restricts one it
+  // creates (icacls is a process per call). A directory left by an older version is narrowed here,
+  // when a secret is about to be written into it.
+  if (SESSION_DIR_IS_PRIVATE) restrictToOwner(SESSION_PATH_DIR, { directory: true });
 
   const timeoutText = humanTimeout(loginTimeoutMs);
   const loginUrl = resolveTarget(loginPath).href;
