@@ -25,14 +25,22 @@ export async function captureSession() {
 
   const timeoutText = humanTimeout(loginTimeoutMs);
   const loginUrl = resolveTarget(loginPath).href;
-  const browser = await launchBrowser({ headless: false });
+  // DOORMAN_CAPTURE_HEADLESS=1 exists for the test suite, whose fixture app signs itself in. With a
+  // real app nobody could complete a sign-in in a window that isn't shown.
+  const browser = await launchBrowser({ headless: process.env.DOORMAN_CAPTURE_HEADLESS === '1' });
   let page;
 
   try {
     const context = await browser.newContext({ ignoreHTTPSErrors: true, viewport });
     page = await context.newPage();
 
-    await goto(page, loginUrl, { settle: false });
+    const loaded = await goto(page, loginUrl, { settle: false });
+    if (loaded.navigationError) {
+      console.error(`Could not load the sign-in page ${loginUrl}: ${loaded.navigationError === 'timeout'
+        ? 'it did not finish loading in time' : loaded.navigationError}.`);
+      console.error('This is not an authentication problem; check the app is healthy and loginPath is right.');
+      return EXIT.ENVIRONMENT;
+    }
 
     // Marker lines: an agent tailing this output keys off these, so keep them stable.
     console.log('=== WAITING FOR SIGN-IN ===');

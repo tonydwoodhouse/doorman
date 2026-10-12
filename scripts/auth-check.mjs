@@ -6,7 +6,7 @@
 //       node auth-check.mjs --profile=admin
 //
 // Exit codes: 0 authenticated | 1 session invalid | 2 no session yet
-//             3 session fine but route non-200 | 4 environment problem (not auth)
+//             3 inconclusive: the route proved nothing (404/5xx/timeout) | 4 environment problem
 //
 // Git Bash on Windows rewrites a leading-slash arg into a Windows path; config.mjs undoes it.
 import { target } from './config.mjs';

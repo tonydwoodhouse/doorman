@@ -45,12 +45,16 @@ the project you are testing. Read `doorman.config.json` before you start — `ap
 | 0 | Session works | Continue. |
 | 1 | Session expired or invalid | Get a new session (§3). |
 | 2 | No session captured yet | Get one (§3). |
-| 3 | Session fine, route returned non-200 | Wrong URL or app bug. **Do not re-authenticate.** |
-| 4 | Environment problem (not configured, server down, Chromium missing, bad argument) | Read the message. Not auth. |
+| 3 | Inconclusive: the route proved nothing (404, 5xx, timeout) | Wrong URL or unhealthy app. **Do not re-authenticate.** |
+| 4 | Environment problem (not configured, server down, Chromium missing, bad argument, crash) | Read the message. Not auth. |
 | 5 | The interactive sign-in was never completed | Window closed or timed out; ask the developer. |
 
 3 or 4 means re-running the sign-in is pointless. Asking the developer to sign in again over a
 route typo wastes their time and teaches them to distrust the tool.
+
+A success line that adds "Evidence: the page loaded without a login redirect" means no positive
+signal is configured, so the check only knows it wasn't bounced to a login page. Setting
+`authenticatedSelector` (or `authenticatedText`) in the config turns that into real proof.
 
 ## 0. Is this project configured yet?
 
@@ -114,8 +118,8 @@ import { assessSession, goto, launchBrowser, newSessionContext, requireSession }
 requireSession();
 const browser = await launchBrowser();
 const page = await (await newSessionContext(browser)).newPage();
-const response = await goto(page, new URL(config.defaultCheckPath, config.baseUrl).href);
-console.log(await assessSession(page, response));   // { verdict, status, finalUrl, reasons }
+const loaded = await goto(page, new URL(config.defaultCheckPath, config.baseUrl).href);
+console.log(await assessSession(page, loaded));   // { verdict: 'valid'|'invalid'|'inconclusive', ... }
 await browser.close();
 ```
 
@@ -172,7 +176,8 @@ Work through these in order; only the interactive sign-in needs the developer.
 ## Gotchas proven in use
 
 - **Get the route right before blaming auth.** A gated page's URL is its framework route (see
-  `defaultCheckPath`), *not* the source-folder path. Exit 3 is telling you exactly this.
+  `defaultCheckPath`), *not* the source-folder path. Exit 3 (a 404 or 500) is usually telling you
+  exactly this.
 - **Git Bash on Windows rewrites leading-slash arguments** into Windows paths (`/dashboard` arrives
   as `C:/Program Files/Git/dashboard`). The scripts detect and undo that, so `/dashboard` is fine;
   if one ever exits 4 with "Not an app route", drop the leading slash — `dashboard` — and the

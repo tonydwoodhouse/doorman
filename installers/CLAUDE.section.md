@@ -16,8 +16,8 @@ Exit codes are the interface — branch on them, don't guess from output:
 | 0 | Session works | Continue. |
 | 1 | Session expired or invalid | Get a new one (below). |
 | 2 | No session captured yet | Get one (below). |
-| 3 | Session is fine, route returned non-200 | A wrong URL or an app bug. **Do not re-authenticate.** |
-| 4 | Environment problem (not configured, dev server down, Chromium missing, bad argument) | Read the message. Not an auth problem. |
+| 3 | Inconclusive: the route proved nothing either way (404, 5xx, timeout) | A wrong URL or an unhealthy app. **Do not re-authenticate.** |
+| 4 | Environment problem (not configured, dev server down, Chromium missing, bad argument, crash) | Read the message. Not an auth problem. |
 | 5 | The interactive sign-in was never completed | Ask the developer what happened. |
 
 ### First run: configure it

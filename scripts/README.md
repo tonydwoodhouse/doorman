@@ -149,11 +149,14 @@ output.
 | `idpHostPattern` | Optional case-insensitive regex matched against the URL **host** to detect an external identity provider. Set it to the known provider host pattern, or leave it `null`. |
 | `authenticatedUrlPattern` | Optional case-insensitive regex matched against the final app **pathname + query string**. Use it when a known post-login URL proves the session is established; otherwise leave it `null`. |
 | `authenticatedSelector` | Optional Playwright selector that must be visible after login and during checks. Choose an element that appears only for an authenticated user (for example, a profile menu or sign-out control); otherwise leave it `null`. |
+| `authenticatedText` | Optional text that must be visible on a signed-in page (e.g. `"Sign out"`). The same role as `authenticatedSelector`, for apps without a stable selector. Every configured positive signal must be present. |
+| `unauthenticatedSelector` | Optional Playwright selector that proves the user is **not** signed in when visible — usually the sign-in form. For SPAs that answer 200 on every route and render a login component client-side. |
 | `unauthenticatedStatusCodes` | HTTP response statuses treated as an unauthenticated session. Default: `[401, 403]`. |
 | `defaultCheckPath` | Gated route checked when you pass no path argument. |
 | `viewport` | Browser viewport `{ width, height }`. |
 | `loginTimeoutMs` | How long the interactive sign-in waits for you to finish sign-in + MFA. |
 | `settleTimeoutMs` | Grace period for JS-rendered content before screenshotting. |
+| `navigationTimeoutMs` | How long a page load may take before the check reports it as inconclusive (exit 3). Default 30 s. |
 | `captureSessionStorage` | Also capture/replay `sessionStorage` (default `true`). Required for MSAL / Entra ID SPAs — see below. |
 | `captureIndexedDB` | Include IndexedDB in the session snapshot (default `false`). Turn on for Firebase Authentication and other SDKs that store tokens there — see below. |
 | `expiryWarningMs` | Warn when the earliest cookie expiry is closer than this. Default 15 min. |
@@ -324,16 +327,21 @@ Every script shares one scheme, so tooling (and agents) can branch on it:
 
 | Code | Meaning |
 |---|---|
-| `0` | Authenticated, page served HTTP 200. ✅ |
-| `1` | Session invalid: redirected to login or the identity provider, left the app origin, returned a configured unauthenticated status, or failed an authentication marker. Sign in again. |
+| `0` | **Valid.** A configured authenticated signal was present, or — when none is configured — the route answered 2xx with no sign of a login page (reported as status-only evidence). ✅ |
+| `1` | **Invalid.** Redirected to login or the identity provider, left the app origin, returned a configured unauthenticated status (401/403), showed `unauthenticatedSelector`, or a 2xx page lacked a configured authenticated signal. Sign in again. |
 | `2` | No session captured yet → `node ensure.mjs`. |
-| `3` | Session is **fine**; the route returned non-200. A wrong URL or an app bug — re-authenticating will not help. |
-| `4` | Environment problem: not configured, dev server down, Chromium not installed, invalid argument. Not an authentication failure. |
+| `3` | **Inconclusive.** The route proved nothing either way: 404, 5xx, another non-2xx status, a timeout or a failed navigation. A wrong URL or an unhealthy app — re-authenticating will not help, and the session is *not* claimed to be valid either. |
+| `4` | Environment problem: not configured, dev server down, Chromium not installed, invalid argument, or an unexpected crash. Not an authentication failure. |
 | `5` | The interactive sign-in was never completed — window closed or timed out. |
 
 The `1` / `3` split matters: a 404 page has no authenticated marker on it either, so treating a
 missing marker as an auth failure is exactly how you end up signing in repeatedly to fix a typo in
-a URL. Only a conclusive signal (login redirect, identity provider, off-origin, 401/403) yields `1`.
+a URL. And `3` is not `0`: a 404 or 500 doesn't prove the session works, so nothing reports it as
+valid. (0.1.0 called code 3 "bad route"; `EXIT.BAD_ROUTE` still exists as an alias.)
+
+`authenticatedSelector` or `authenticatedText` is what turns a `0` into positive proof. Without one,
+a 2xx response on the configured protected route is the practical default — and the success output
+says so, so it is never mistaken for more.
 
 ## Writing your own scripts
 
@@ -349,8 +357,9 @@ import { assessSession, goto, launchBrowser, newSessionContext, requireSession }
 requireSession();                                    // exits 2 if no session captured
 const browser = await launchBrowser();               // exits 4 if Chromium is missing
 const page = await (await newSessionContext(browser)).newPage();   // replays the session
-const response = await goto(page, new URL('/some/route', config.baseUrl).href);
-const { verdict, status, finalUrl, reasons } = await assessSession(page, response);
+const loaded = await goto(page, new URL('/some/route', config.baseUrl).href);
+// verdict is 'valid', 'invalid' or 'inconclusive'; evidence is 'explicit' or 'status-only'
+const { verdict, evidence, status, finalUrl, reasons } = await assessSession(page, loaded);
 await browser.close();
 ```
 

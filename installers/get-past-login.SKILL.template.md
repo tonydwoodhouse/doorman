@@ -24,8 +24,8 @@ Run every toolkit command **from the toolkit directory** (it has its own `packag
 | 0 | Session works | Continue. |
 | 1 | Session expired or invalid | Get a new session (§3). |
 | 2 | No session captured yet | Get one (§3). |
-| 3 | Session fine, route returned non-200 | Wrong URL or app bug. **Do not re-authenticate.** |
-| 4 | Environment problem (not configured, server down, Chromium missing, bad argument) | Read the message. Not auth. |
+| 3 | Inconclusive: the route proved nothing (404, 5xx, timeout) | Wrong URL or unhealthy app. **Do not re-authenticate.** |
+| 4 | Environment problem (not configured, server down, Chromium missing, bad argument, crash) | Read the message. Not auth. |
 | 5 | The interactive sign-in was never completed | Window closed or timed out; ask the developer. |
 
 A code of 3 or 4 means re-running the sign-in is pointless — it will not help, and asking the
@@ -108,8 +108,8 @@ import { assessSession, goto, launchBrowser, newSessionContext, requireSession }
 requireSession();
 const browser = await launchBrowser();
 const page = await (await newSessionContext(browser)).newPage();
-const response = await goto(page, new URL(config.defaultCheckPath, config.baseUrl).href);
-console.log(await assessSession(page, response));   // { verdict, status, finalUrl, reasons }
+const loaded = await goto(page, new URL(config.defaultCheckPath, config.baseUrl).href);
+console.log(await assessSession(page, loaded));   // { verdict: 'valid'|'invalid'|'inconclusive', ... }
 await browser.close();
 ```
 
@@ -160,7 +160,8 @@ Work through these in order; only escalate the interactive sign-in.
 ### Gotchas proven in-session
 
 - **Get the route right before blaming auth.** A gated page's URL is its framework route (see
-  `defaultCheckPath`), *not* the source-folder path. Exit 3 is telling you exactly this.
+  `defaultCheckPath`), *not* the source-folder path. Exit 3 (a 404 or 500) is usually telling you
+  exactly this.
 - **Git Bash rewrites leading-slash args** into Windows paths; the scripts detect and undo it. If
   one ever exits 4 with "Not an app route", drop the leading slash — `node shot.mjs dashboard` —
   and the scripts add it back. Avoid `MSYS_NO_PATHCONV=1`: it affects every argument in the command.

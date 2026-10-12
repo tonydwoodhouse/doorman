@@ -3,21 +3,25 @@
 // Each route models one way real apps behave, so the test suite can prove what doorman does with
 // it rather than claiming it in prose:
 //
-//   /login            forms login. With autoLogin the page submits itself, standing in for the
-//                     human so the "interactive" capture can run unattended.
+//   /login            forms login. Opened as /login?auto=1 (or with autoLogin: true) the page
+//                     submits itself, standing in for the human so the "interactive" capture can
+//                     run unattended. Tests use ?auto=1 in loginPath, so a check that bounces to
+//                     plain /login stays signed out, as it would with a real person.
 //   /dashboard        server-rendered, cookie session; 302 to /login without one
 //   /api/me           401 without a session
 //   /admin            403 for every user (signed in or not)
 //   /missing          404
 //   /boom             500
 //   /slow             never answers (timeouts)
+//   /loop             redirects to itself forever
 //   /spa              200 for everyone; renders a sign-in component client-side when signed out
 //   /ls/*, /ss/*      tokens kept in localStorage / sessionStorage instead of a cookie
 //   /idb/*            token kept in IndexedDB
 //   /idp-login        sends the browser to a separate identity-provider origin and back
 //
-// Usage as a module: `const app = await startApp({ autoLogin: true })` -> { origin, idpOrigin,
-// close(), sessions }. Usage as a CLI: `node app.mjs [--port N] [--auto-login]`.
+// Usage as a module: `const app = await startApp()` -> { origin, idpOrigin, close(), expireAll(),
+// sessions }. Usage as a CLI: `node app.mjs [--port=N] [--auto-login]` (--auto-login: every
+// sign-in page submits itself, for unattended manual runs).
 import { createServer } from 'http';
 import { randomBytes } from 'crypto';
 import { fileURLToPath } from 'url';
@@ -76,7 +80,9 @@ export async function startApp({ port = 0, idpPort = 0, autoLogin = false, sessi
     res.writeHead(status, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(body));
   };
-  const auto = (selector) => (autoLogin ? `setTimeout(() => document.querySelector('${selector}').click(), 300);` : '');
+  const auto = (url, selector) => (autoLogin || url.searchParams.get('auto') === '1'
+    ? `setTimeout(() => document.querySelector('${selector}').click(), 300);` : '');
+  const withAuto = (url, href) => (url.searchParams.get('auto') === '1' ? `${href}${href.includes('?') ? '&' : '?'}auto=1` : href);
 
   // Client-side check for the storage-based routes: ask the server whether the token is good.
   const storageApp = (store, key) => page('App', '<div id="root">loading</div>', `
@@ -103,7 +109,7 @@ export async function startApp({ port = 0, idpPort = 0, autoLogin = false, sessi
 
     if (path === '/login' && req.method === 'GET') {
       return html(res, 200, page('Sign in', `<form method="post" action="/login">
-        <input name="user" value="dev"><button id="go" type="submit">Sign in</button></form>`, auto('#go')));
+        <input name="user" value="dev"><button id="go" type="submit">Sign in</button></form>`, auto(url, '#go')));
     }
     if (path === '/login' && req.method === 'POST') {
       await readBody(req);
@@ -121,6 +127,10 @@ export async function startApp({ port = 0, idpPort = 0, autoLogin = false, sessi
     if (path === '/missing') return html(res, 404, page('Not found', 'Not found'));
     if (path === '/boom') return html(res, 500, page('Error', 'Server error'));
     if (path === '/slow') return; // never answer
+    if (path === '/loop') {
+      res.writeHead(302, { Location: '/loop' });
+      return res.end();
+    }
     if (path === '/spa') {
       return html(res, 200, page('SPA', '<div id="root">loading</div>', `
         fetch('/api/me').then((r) => {
@@ -140,14 +150,16 @@ export async function startApp({ port = 0, idpPort = 0, autoLogin = false, sessi
       const store = kind === 'idb' ? idbPut(token) : `Promise.resolve(${storage[kind][0]}.setItem('token', '${token}'))`;
       return html(res, 200, page('Sign in', `<button id="go">Sign in</button>`, `
         document.getElementById('go').onclick = async () => { await ${store}; location.href = '/${kind}/app'; };
-        ${auto('#go')}`));
+        ${auto(url, '#go')}`));
     }
     if (storage[kind] && sub === 'app') return html(res, 200, storageApp(storage[kind][1], kind));
     if (path === '/api/token') return tokens.has(url.searchParams.get('t')) ? json(res, 200, {}) : json(res, 401, {});
 
     // A separate identity-provider origin, as with OAuth/OIDC/SAML.
     if (path === '/idp-login') {
-      res.writeHead(302, { Location: `${idpOrigin}/authorize?redirect=${encodeURIComponent(`${origin}/callback`)}` });
+      res.writeHead(302, {
+        Location: withAuto(url, `${idpOrigin}/authorize?redirect=${encodeURIComponent(`${origin}/callback`)}`),
+      });
       return res.end();
     }
     if (path === '/callback') {
@@ -164,7 +176,7 @@ export async function startApp({ port = 0, idpPort = 0, autoLogin = false, sessi
     if (url.pathname === '/authorize' && req.method === 'GET') {
       const redirect = url.searchParams.get('redirect') ?? '';
       return html(res, 200, page('IdP', `<form method="post" action="/authorize?redirect=${encodeURIComponent(redirect)}">
-        <button id="go" type="submit">Approve</button></form>`, auto('#go')));
+        <button id="go" type="submit">Approve</button></form>`, auto(url, '#go')));
     }
     if (url.pathname === '/authorize' && req.method === 'POST') {
       const code = randomBytes(8).toString('hex');

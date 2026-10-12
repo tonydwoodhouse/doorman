@@ -10,6 +10,7 @@
 // or a vendored one; paths.mjs settles that, and everything here works from its answer.
 import { dirname, isAbsolute, join, relative } from 'path';
 import { existsSync, readFileSync } from 'fs';
+import { stripBase } from './verdict.mjs';
 import {
   CONFIG_EXISTS, CONFIG_PATH, OUTPUT_DIR as OUT_DIR, PLUGIN_MODE, PROJECT_DIR, SESSION_DIR,
   ensureDir, noteProjectPath,
@@ -25,12 +26,23 @@ const configLabel = !rel || rel.startsWith('..') || isAbsolute(rel) ? CONFIG_PAT
 // re-exports them for convenience.
 export const EXIT = {
   OK: 0,
-  UNAUTHENTICATED: 1,  // a session exists but no longer works -> node login-once.mjs
-  NO_SESSION: 2,       // nothing captured yet                 -> node login-once.mjs
-  BAD_ROUTE: 3,        // session is fine, the route is not (404/500/...) -> fix the URL
-  ENVIRONMENT: 4,      // dev server down, Chromium missing, bad config/argument -> not auth
-  LOGIN_INCOMPLETE: 5, // login-once.mjs: the sign-in was never finished
+  UNAUTHENTICATED: 1,  // explicit evidence the session doesn't work   -> sign in again
+  NO_SESSION: 2,       // nothing captured yet                          -> sign in
+  INCONCLUSIVE: 3,     // the route proved nothing either way (404/5xx/timeout) -> NOT auth; fix the URL
+  ENVIRONMENT: 4,      // dev server down, Chromium missing, bad config/argument, crash -> not auth
+  LOGIN_INCOMPLETE: 5, // the interactive sign-in was never finished
 };
+/** @deprecated 0.1.0's name for INCONCLUSIVE — same code, kept for custom scripts that import it. */
+EXIT.BAD_ROUTE = EXIT.INCONCLUSIVE;
+
+// An unexpected exception would otherwise exit 1 — which is UNAUTHENTICATED, and would send an
+// agent off to ask for a fresh sign-in over what is really a bug or an odd page. Anything that
+// escapes is reported as what it is: an environment problem, with the stack for whoever debugs it.
+process.on('uncaughtException', (error) => {
+  console.error(`doorman: unexpected error — this is not an authentication result.
+${error?.stack ?? error}`);
+  process.exit(EXIT.ENVIRONMENT);
+});
 
 /** Print a clean message (no stack trace) and exit as an environment problem. */
 function fail(message, ...hints) {
@@ -64,6 +76,12 @@ const DEFAULTS = {
   // Optional Playwright selector that must be visible after login/check. Use an element that
   // exists only for an authenticated user, such as a profile menu or sign-out control.
   authenticatedSelector: null,
+  // Optional text that must be visible on a signed-in page, e.g. "Sign out". Same role as
+  // authenticatedSelector, for apps without stable selectors.
+  authenticatedText: null,
+  // Optional Playwright selector that proves the user is NOT signed in when visible — typically
+  // the sign-in form. Catches SPAs that answer 200 everywhere and render a login component.
+  unauthenticatedSelector: null,
   // HTTP statuses that conclusively indicate the session cannot access the requested route.
   unauthenticatedStatusCodes: [401, 403],
   // Default gated route auth-check.mjs verifies when no path arg is passed.
@@ -74,6 +92,8 @@ const DEFAULTS = {
   loginTimeoutMs: 300000,
   // Grace period for JS-rendered content to settle before screenshotting (ms).
   settleTimeoutMs: 1500,
+  // How long a page load may take before the check gives up and reports it as inconclusive (ms).
+  navigationTimeoutMs: 30000,
   // Also capture/replay sessionStorage. Playwright's storageState() covers cookies and
   // localStorage only, so MSAL.js / Entra ID SPAs (which default to sessionStorage) would
   // otherwise appear signed out on every headless run.
@@ -191,9 +211,7 @@ export function joinBasePath(pathAndQuery) {
 
 /** Remove the base path from a pathname, so config regexes stay written app-relative. */
 export function stripBasePath(pathname) {
-  if (!cfg.basePath || !pathname.startsWith(cfg.basePath)) return pathname;
-  const rest = pathname.slice(cfg.basePath.length);
-  return rest.startsWith('/') ? rest : `/${rest}`;
+  return stripBase(pathname, cfg.basePath);
 }
 
 function requireConfigured(value) {
@@ -219,9 +237,12 @@ function validateConfig(value) {
   validatePattern(value.idpHostPattern, 'idpHostPattern', true);
   validatePattern(value.authenticatedUrlPattern, 'authenticatedUrlPattern', true);
   validateOptionalString(value.authenticatedSelector, 'authenticatedSelector');
+  validateOptionalString(value.authenticatedText, 'authenticatedText');
+  validateOptionalString(value.unauthenticatedSelector, 'unauthenticatedSelector');
   validateViewport(value.viewport);
   validatePositiveNumber(value.loginTimeoutMs, 'loginTimeoutMs');
   validatePositiveNumber(value.settleTimeoutMs, 'settleTimeoutMs');
+  validatePositiveNumber(value.navigationTimeoutMs, 'navigationTimeoutMs');
   validatePositiveNumber(value.expiryWarningMs, 'expiryWarningMs');
   validateBoolean(value.captureSessionStorage, 'captureSessionStorage');
   validateBoolean(value.captureIndexedDB, 'captureIndexedDB');
@@ -265,7 +286,7 @@ function validatePattern(value, name, optional) {
 
 function validateOptionalString(value, name) {
   if (value !== null && (typeof value !== 'string' || value.length === 0)) {
-    fail(`${configLabel}: ${name} must be null or a non-empty selector string.`);
+    fail(`${configLabel}: ${name} must be null or a non-empty string.`);
   }
 }
 

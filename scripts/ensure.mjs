@@ -17,7 +17,8 @@
 //   === WAITING FOR SIGN-IN === the window is open — ask the developer to sign in
 //   === SESSION READY ===      the session works; carry on (also printed if none was needed)
 //
-// Exit codes: 0 ready | 1 signed in but the check still fails | 3 session fine, route non-200
+// Exit codes: 0 ready | 1 signed in but the check still fails | 2 no session (--no-login)
+//             3 inconclusive: the route proved nothing (404/5xx/timeout) — signing in can't help
 //             4 environment problem | 5 sign-in never completed
 import { config, flags, target } from './config.mjs';
 import { EXIT, clearSession } from './session.mjs';
@@ -42,10 +43,10 @@ if (first.code === EXIT.OK) {
   process.exit(EXIT.OK);
 }
 
-// A route problem is not something signing in again can fix.
-if (first.code === EXIT.BAD_ROUTE) {
+// A route that proves nothing either way is not something signing in again can fix.
+if (first.code === EXIT.INCONCLUSIVE) {
   reportCheck(first);
-  process.exit(EXIT.BAD_ROUTE);
+  process.exit(EXIT.INCONCLUSIVE);
 }
 
 if (noLogin) {

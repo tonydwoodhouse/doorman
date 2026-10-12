@@ -54,7 +54,10 @@ Read the repo for these. They are in the code, so don't ask the developer:
 - **`authenticatedSelector`** — a selector for something only a signed-in user sees: a sign-out
   link, a profile menu, a user avatar. **Worth the effort.** Without it, every check relies on "we
   weren't redirected to the login page", which quietly passes on apps that render a signed-out
-  version of the same URL.
+  version of the same URL. If there's no stable selector, `authenticatedText` (e.g. `"Sign out"`)
+  does the same job.
+- **`unauthenticatedSelector`** — only for SPAs that answer 200 on every route and render a sign-in
+  component client-side: a selector for that component (e.g. the login form).
 - **`idpHostPattern`** — only for an external identity provider with a stable host (Entra ID,
   Auth0, Okta). It lets a redirect to the provider be recognised as "not signed in" rather than
   a mysterious off-origin failure.
