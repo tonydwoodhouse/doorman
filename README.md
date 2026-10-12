@@ -270,6 +270,7 @@ doorman/                          # the repository root IS the plugin, for both 
 │   ├── auth-check.mjs            # headless: verify the saved session
 │   ├── shot.mjs                  # headless: screenshot a gated page (verifies first)
 │   ├── install-deps.mjs          # one-off, detached, hash-guarded Playwright install (SessionStart hook)
+│   ├── install-lock.mjs          # the install lock: who holds it, and whether it's stale
 │   ├── package.json              # deps: playwright (pinned)
 │   ├── package-lock.json         # committed on purpose — one Chromium for the whole team
 │   ├── .gitignore                # ignores node_modules / session files / *.png
@@ -282,7 +283,8 @@ doorman/                          # the repository root IS the plugin, for both 
 │   ├── CLAUDE.section.md         # the agent instructions both installers write to CLAUDE.md
 │   ├── AGENTS.section.md         # same instructions, written to AGENTS.md
 │   └── get-past-login.SKILL.template.md   # optional per-project skill (Claude Code and Codex)
-├── test/                         # node:test suite — `npm test` (fixture app + end-to-end runs)
+├── test/                         # node:test suite — `npm test` (see Development)
+├── .github/workflows/test.yml    # CI: the suite on Linux, Windows and macOS
 └── package.json                  # repository dev tasks only; the runtime's manifest is scripts/package.json
 ```
 
@@ -347,6 +349,27 @@ of anything it overwrites that the installer didn't write.
   account — the whole design persists a live session to disk.
 - Interactive sign-in needs a local, visible desktop — see
   [One thing that cannot be automated](#one-thing-that-cannot-be-automated) above.
+
+## Development
+
+```bash
+(cd scripts && npm ci && npx playwright install chromium)   # the runtime's one dependency
+npm test                                                     # everything, ~10 minutes
+npm run test:unit                                            # no browser, no installers, ~30 s
+```
+
+The suite (`test/`, Node's built-in runner) drives the real scripts as an agent would — as child
+processes, judged by exit code and output — against a fixture app (`test/fixtures/app.mjs`) with a
+route for each authentication pattern: a cookie session behind a 302 to `/login`, tokens in
+`localStorage`, `sessionStorage` and IndexedDB, a separate identity-provider origin, an SPA that
+answers 200 and renders its sign-in client-side, 401/403/404/500 routes, a page that never loads
+and a redirect loop. Each end-to-end case signs in with a headless Chromium, lets it close, and
+replays the session in a fresh browser.
+
+It also covers profiles, session expiry, owner-only session files and the Git guard, the install
+lock, path and config resolution, and both installers — `install.sh` under bash and `install.ps1`
+under PowerShell 7, including upgrades over customized files and uninstalls that must leave them.
+[CI](.github/workflows/test.yml) runs it on Linux, Windows and macOS.
 
 ## License
 

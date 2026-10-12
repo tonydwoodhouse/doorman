@@ -1,0 +1,47 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / node ${{ matrix.node }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # macOS runs install.sh under the system bash 3.2; Windows runs it under Git Bash and
+        # install.ps1 under PowerShell 7, with core.autocrlf checkouts.
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: [24]
+        include:
+          - os: ubuntu-latest
+            node: 20 # the oldest version the README promises
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: scripts/package-lock.json
+
+      - name: Install Playwright (the runtime's one dependency)
+        working-directory: scripts
+        run: npm ci
+
+      - name: Install Chromium
+        working-directory: scripts
+        run: npx playwright install --with-deps chromium
+
+      - name: Validate the plugin manifests
+        if: runner.os == 'Linux'
+        run: |
+          for f in .claude-plugin/plugin.json .claude-plugin/marketplace.json .codex-plugin/plugin.json .agents/plugins/marketplace.json; do
+            node -e "JSON.parse(require('fs').readFileSync('$f', 'utf8'))" || { echo "invalid JSON: $f"; exit 1; }
+          done
+
+      - name: Test
+        run: npm test
