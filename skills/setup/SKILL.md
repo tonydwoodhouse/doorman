@@ -1,8 +1,6 @@
 ---
 name: "setup"
 description: "Configure doorman for this project: detect the dev server URL, work out the login and gated routes, and prove a session can be captured. Use once per project, or whenever a doorman script exits 4 saying it is not configured."
-user-invocable: true
-disable-model-invocation: false
 ---
 
 # Setting doorman up for this project
@@ -11,11 +9,15 @@ One config file, five fields, most of them derivable from the repo. Aim to finis
 the developer anything except to sign in at the end.
 
 ```bash
-DOORMAN="$CLAUDE_PLUGIN_ROOT/../../scripts"    # if empty, it is ../../../../scripts beside this file
+DOORMAN="${CLAUDE_PLUGIN_ROOT}/scripts"
 node "$DOORMAN/paths.mjs"                  # where the config will go, and whether one exists
 ```
 
-The config lands at `<project>/.claude/doorman/doorman.config.json`. It holds URLs and selectors,
+Claude Code fills in that path when it loads this skill. If the first line still reads literally
+`${CLAUDE_PLUGIN_ROOT}` (as under Codex), use the absolute path of the `scripts` directory two
+levels above this SKILL.md instead.
+
+The config lands at `<project>/.doorman/doorman.config.json`. It holds URLs and selectors,
 never secrets, so it is meant to be committed — the saved session lives outside the project
 entirely and is never at risk of being committed with it.
 
@@ -90,7 +92,7 @@ Show them the finished config, where the session file lives, and which fields yo
 found stated. If you had to guess `authenticatedSelector`, say so — it's the one field a human can
 correct in seconds and the one that most improves reliability.
 
-Suggest committing `.claude/doorman/doorman.config.json` so the rest of the team gets it for free.
+Suggest committing `.doorman/doorman.config.json` so the rest of the team gets it for free.
 
 ## Rules
 

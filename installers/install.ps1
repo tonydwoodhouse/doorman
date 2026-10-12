@@ -226,7 +226,7 @@ if ($InstallSkill) {
   if ((Test-Path $codexSkillDest) -and -not $Force) {
     Write-Host "  skip (exists): .agents/skills/get-past-login/SKILL.md" -ForegroundColor DarkYellow
   } else {
-    Copy-Item (Join-Path $scriptRoot 'get-past-login.codex.SKILL.template.md') $codexSkillDest -Force
+    Copy-Item (Join-Path $scriptRoot 'get-past-login.SKILL.template.md') $codexSkillDest -Force
     Write-Host "  copied: .agents/skills/get-past-login/SKILL.md (reads doorman.config.json)" -ForegroundColor Green
   }
 }

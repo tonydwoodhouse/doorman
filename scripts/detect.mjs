@@ -26,7 +26,7 @@ import { connect } from 'net';
 import { dirname, join, basename, resolve } from 'path';
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'fs';
 import {
-  CONFIG_PATH, PROJECT_DIR, PROJECT_DIR_IS_GUESS, SCRIPT_DIR as HERE, ensureDir,
+  CONFIG_PATH, PROJECT_DIR, PROJECT_DIR_IS_GUESS, SCRIPT_DIR as HERE, ensureDir, projectConfigIn,
 } from './paths.mjs';
 
 const EXIT_OK = 0;
@@ -576,7 +576,13 @@ const SKELETON = {
 
 if (opts.write) {
   const configExisted = existsSync(configPath);
-  const existing = configExisted ? (readJsonc(configPath) ?? {}) : {};
+  // Creating a vendored config in a project that already has a plugin one: start from that, so
+  // the routes and selectors someone already worked out carry over instead of being asked again.
+  const seedPath = configExisted ? null : projectConfigIn(projectRoot);
+  const seeded = seedPath && resolve(seedPath) !== configPath ? readJsonc(seedPath) : null;
+  if (seeded) console.log(`
+Starting from the existing project config at ${seedPath}.`);
+  const existing = configExisted ? (readJsonc(configPath) ?? {}) : (seeded ?? {});
   const next = { ...SKELETON, ...existing };
   const changes = [];
 
@@ -620,8 +626,13 @@ if (opts.write) {
     writeFileSync(configPath, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
     console.log(`\n${configExisted ? 'Wrote' : 'Created'} ${configPath}:`);
     for (const change of changes) console.log(`  ${change}`);
-    if (!configExisted) {
-      console.log('  Still to check against the app\'s routes: loginPath, authenticatedSelector.');
+    // Say which values are still the skeleton's guesses, so nobody mistakes "/Login" or "/" for
+    // something read out of the project.
+    const placeholders = ['loginPath', 'defaultCheckPath', 'authenticatedSelector']
+      .filter((key) => next[key] === SKELETON[key]);
+    if (placeholders.length) {
+      console.log('  Still placeholders, NOT detected — set these from the app\'s own routes:');
+      for (const key of placeholders) console.log(`    ${key} = ${JSON.stringify(next[key])}`);
     }
   } else {
     console.log(`\nNo changes needed in ${configPath}.`);

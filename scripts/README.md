@@ -22,7 +22,7 @@ There are two ways to run this, and they differ only in where things are kept:
 | | Claude Code / Codex plugin | Vendored (`tools/doorman/`) |
 |---|---|---|
 | scripts | in the installed plugin | committed in your repo |
-| config | `<project>/.claude/doorman/doorman.config.json` | `doorman.config.json` beside the scripts |
+| config | `<project>/.doorman/doorman.config.json` | `doorman.config.json` beside the scripts |
 | session files | the host's plugin data directory, outside the project | beside the scripts, gitignored |
 | screenshots | the host's plugin data directory | beside the scripts, gitignored |
 | Playwright | installed once per machine | `node_modules` per project |
@@ -31,17 +31,23 @@ There are two ways to run this, and they differ only in where things are kept:
 node paths.mjs      # prints every one of those, resolved, for the project you're standing in
 ```
 
-`paths.mjs` decides which mode it's in from its own location — a full checkout of this repo has
-`integrations/claude/.claude-plugin/plugin.json` or `integrations/codex/.codex-plugin/plugin.json`
-one directory up, and the installer never copies `integrations/` — so a vendored install behaves
-the same however it is invoked. Data directory resolution accepts `DOORMAN_DATA_DIR`, Codex's own
-`PLUGIN_DATA`, and Claude Code's `CLAUDE_PLUGIN_DATA`, in that order. Every location can also be
+`paths.mjs` decides which mode it's in from its own location — the plugin (this repo, or the host's
+installed copy of it) has `.claude-plugin/plugin.json` or `.codex-plugin/plugin.json` one directory
+up, and the installer only ever copies `scripts/` — so a vendored install behaves the same however
+it is invoked.
+
+The plugin data directory needs one extra step. Both hosts tell hook commands where it is
+(Codex's `PLUGIN_DATA`, Claude Code's `CLAUDE_PLUGIN_DATA`) but neither tells the shell the agent
+runs commands in. So the first process to resolve it — normally the `SessionStart` hook — records
+its answer in `~/.doorman/plugin-roots/<hash>.json`, keyed by the installed scripts' own path, and
+every later run of that copy reads it back. `DOORMAN_DATA_DIR` overrides all of this, and
+`DOORMAN_HOME` moves `~/.doorman` itself. Every location can also be
 overridden directly: `DOORMAN_CONFIG`, `DOORMAN_SESSION_DIR`, `DOORMAN_OUTPUT_DIR`,
 `DOORMAN_DEPS_DIR`, `DOORMAN_PROJECT_DIR`.
 
 Vendored, run the commands **from this folder**. As a plugin, run them from anywhere inside the
-project (it is found from the working directory) using the plugin's path — Claude Code:
-`node "$CLAUDE_PLUGIN_ROOT/../../scripts/ensure.mjs"`; Codex: `node "$PLUGIN_ROOT/../../scripts/ensure.mjs"`.
+project (it is found from the working directory) using the installed plugin's path —
+`node "<plugin>/scripts/ensure.mjs"`; the skills work `<plugin>` out for the agent.
 The examples below use the short form.
 
 ## Does this work with my app?
@@ -163,7 +169,7 @@ malformed JSON, invalid regular expressions, or invalid values stop the script w
 You need [Node.js](https://nodejs.org/) 20+ installed.
 
 **As a plugin** there is nothing to do: a `SessionStart` hook (Claude Code and Codex both support
-it — see `integrations/claude/hooks/hooks.json` and `integrations/codex/hooks/hooks.json`) installs
+it, and both run the plugin's one `hooks/hooks.json`) installs
 Playwright and Chromium into the host's plugin data directory the first time, in the background,
 and does nothing on every session after that. It is guarded by a hash of `package.json` +
 `package-lock.json`, so bumping the pinned version is all it takes to have every machine update
@@ -387,17 +393,15 @@ stable. `ensure.mjs --no-login` is the "check but don't interrupt me" variant.
 
 ## Skills (Claude Code and Codex)
 
-Each plugin ships three skills with identical behavior, addressed the way its host expects
+The plugin ships three skills, shared by both hosts and addressed the way each expects
 (`doorman:get-past-login` / `doorman:setup` / `doorman:vendor` on Claude Code, mentioned as
 `$get-past-login` / `$setup` / `$vendor` or matched automatically on Codex):
 **`get-past-login`** (verify and screenshot gated pages), **`setup`** (configure a project) and
-**`vendor`** (make a committed copy like this one). Nothing to install — see
-`integrations/claude/skills/` and `integrations/codex/skills/`.
+**`vendor`** (make a committed copy like this one). Nothing to install — see the plugin's `skills/`.
 
-For a vendored install the toolkit repo has `installers/get-past-login.SKILL.template.md` (Claude)
-and `installers/get-past-login.codex.SKILL.template.md` (Codex), which the installer drops at
-`.claude/skills/get-past-login/SKILL.md` and `.agents/skills/get-past-login/SKILL.md` with
-`--install-skill`. Both read `doorman.config.json` at runtime, so they need no substitutions. Worth
+For a vendored install the toolkit repo has `installers/get-past-login.SKILL.template.md`, which
+the installer drops at both `.claude/skills/get-past-login/SKILL.md` (Claude Code) and
+`.agents/skills/get-past-login/SKILL.md` (Codex) with `--install-skill`. Both copies read `doorman.config.json` at runtime, so they need no substitutions. Worth
 doing only if some contributors won't have a plugin installed, since it duplicates what the plugin
 already provides.
 
@@ -405,10 +409,10 @@ already provides.
 
 - **Route ≠ folder path.** A gated page's URL is whatever its framework routes it to, *not* the
   source-folder path. A 404 is not an auth failure.
-- **Git Bash on Windows** mangles a leading-slash argument into a Windows path. Simplest fix: drop
-  the leading slash (`node shot.mjs dashboard`) — the scripts add it back. `MSYS_NO_PATHCONV=1`
-  works too, but it disables path conversion for the whole command, including any absolute paths
-  and path-like environment variables in it.
+- **Git Bash on Windows** rewrites a leading-slash argument into a Windows path
+  (`C:/Program Files/Git/dashboard`). The scripts recognise that and undo it; when they can't tell
+  which Git install did it they exit 4 with "Not an app route" rather than requesting a nonsense
+  URL. Dropping the leading slash (`node shot.mjs dashboard`) always works — the scripts add it back.
 - **Let content settle.** JS-rendered grids/tables fill *after* load; `settleTimeoutMs` covers
   this, but bump it (or pass `--wait="<selector>"`) if pages look blank.
 - **Use a strong success marker when possible.** `authenticatedSelector` is more reliable than

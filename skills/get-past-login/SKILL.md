@@ -1,8 +1,6 @@
 ---
 name: "get-past-login"
 description: "Get past a sign-in wall that is blocking you. Use whenever a page redirects to a login, returns 401 or 403, renders as signed-out, or a saved session has expired — get a working session, then carry on with whatever you were already doing. Also use for any browser check, screenshot or CSS/layout inspection of a page that needs a signed-in user."
-user-invocable: true
-disable-model-invocation: false
 ---
 
 # Getting past a sign-in wall
@@ -17,21 +15,22 @@ assumed to be installed — don't try it first.
 
 ## Where things are
 
-The scripts live in the doorman repo the plugin was installed from, not in the project. Set this
-once per session and use it in every command below:
+The scripts live in the installed plugin, not in the project. Set this once per session and use it
+in every command below:
 
 ```bash
-DOORMAN="$CLAUDE_PLUGIN_ROOT/../../scripts"
+DOORMAN="${CLAUDE_PLUGIN_ROOT}/scripts"
 ```
 
-If `$CLAUDE_PLUGIN_ROOT` is empty in your shell, derive it from the path of this very file: it is
-`<repo>/integrations/claude/skills/get-past-login/SKILL.md`, so the scripts are `../../../../scripts`
-beside it. Use an absolute path, and confirm it with `node "$DOORMAN/paths.mjs"`, which prints every
-location it resolved:
+Claude Code fills in that path when it loads this skill. If what you see above is still the literal
+text `${CLAUDE_PLUGIN_ROOT}` (Codex doesn't substitute it, and the variable is not set in your
+shell), use the `scripts` directory two levels above this SKILL.md instead — this file is
+`<plugin>/skills/get-past-login/SKILL.md`. Either way use an absolute path, and confirm it with
+`node "$DOORMAN/paths.mjs"`, which prints every location it resolved:
 
 | | |
 |---|---|
-| config | `<project>/.claude/doorman/doorman.config.json` — per project, committed, no secrets |
+| config | `<project>/.doorman/doorman.config.json` — per project, committed, no secrets |
 | session | the plugin's data directory, **outside the project** — a live session, never committed |
 | screenshots | the plugin's data directory; `shot.mjs` prints the absolute path of each one |
 
@@ -56,7 +55,8 @@ route typo wastes their time and teaches them to distrust the tool.
 ## 0. Is this project configured yet?
 
 If `doorman.config.json` doesn't exist, or a script exits 4 saying it isn't configured, run the
-`doorman:setup` skill — it does the whole job. In short:
+doorman `setup` skill (`/doorman:setup` in Claude Code, `$setup` in Codex) — it does the whole job.
+In short:
 
 ```bash
 node "$DOORMAN/detect.mjs"            # ranked candidates + the file and field each came from
@@ -164,8 +164,8 @@ Work through these in order; only the interactive sign-in needs the developer.
 
 1. **Playwright missing** (exit 4 saying so) — the plugin installs it on session start. If the
    message says it is still installing, wait and retry. Otherwise run
-   `node "$CLAUDE_PLUGIN_ROOT/../../scripts/install-deps.mjs" --sync` and read the log path it prints.
-2. **Not configured** (exit 4 saying so) — §0, or the `doorman:setup` skill.
+   `node "$DOORMAN/install-deps.mjs" --sync` and read the log path it prints.
+2. **Not configured** (exit 4 saying so) — §0, or the doorman `setup` skill.
 3. **Dev server down** (exit 4) — start it per the project's run instructions.
 4. **No session / expired** (exit 2 or 1) — §3.
 
@@ -173,10 +173,11 @@ Work through these in order; only the interactive sign-in needs the developer.
 
 - **Get the route right before blaming auth.** A gated page's URL is its framework route (see
   `defaultCheckPath`), *not* the source-folder path. Exit 3 is telling you exactly this.
-- **Git Bash on Windows mangles leading-slash arguments** into Windows paths. Just drop the leading
-  slash — `node "$DOORMAN/shot.mjs" dashboard` — the scripts add it back. Don't reach for
-  `MSYS_NO_PATHCONV=1` here: it disables path conversion for the whole command, including
-  `$DOORMAN` and `$CLAUDE_PLUGIN_DATA`, which breaks the run in a much more confusing way.
+- **Git Bash on Windows rewrites leading-slash arguments** into Windows paths (`/dashboard` arrives
+  as `C:/Program Files/Git/dashboard`). The scripts detect and undo that, so `/dashboard` is fine;
+  if one ever exits 4 with "Not an app route", drop the leading slash — `dashboard` — and the
+  scripts add it back. Don't reach for `MSYS_NO_PATHCONV=1`: it disables path conversion for the
+  whole command, including `$DOORMAN` itself, which breaks the run in a much more confusing way.
 - **Let JS-rendered content settle.** Grids and tables fill late; use `--wait="<selector>"` rather
   than screenshotting a blank page and guessing.
 - **A sign-in that succeeds but still checks as unauthenticated is a config problem.** If the

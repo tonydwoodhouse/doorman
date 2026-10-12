@@ -8,7 +8,7 @@
 //
 // Where the config and the session files actually live depends on whether this is a plugin install
 // or a vendored one; paths.mjs settles that, and everything here works from its answer.
-import { isAbsolute, join, relative } from 'path';
+import { dirname, isAbsolute, join, relative } from 'path';
 import { existsSync, readFileSync } from 'fs';
 import {
   CONFIG_EXISTS, CONFIG_PATH, OUTPUT_DIR as OUT_DIR, PLUGIN_MODE, PROJECT_DIR, SESSION_DIR,
@@ -288,6 +288,34 @@ function validateBoolean(value, name) {
   }
 }
 
+/**
+ * Undo Git Bash's argument conversion on Windows, which turns `/dashboard` into
+ * `C:/Program Files/Git/dashboard` before node ever sees it. No app route starts with a drive
+ * letter, so a value that does is either recovered (when the Git install it was prefixed with can
+ * be identified) or refused with the fix, never sent to the app as a route.
+ */
+export function undoMsysPathConversion(raw) {
+  if (!/^[a-z]:[\\/]/i.test(raw)) return raw;
+  const normalized = raw.replace(/\\/g, '/');
+  // MSYS prefixes its own root: the directory holding usr/bin/bash.exe. EXEPATH and MSYSTEM_PREFIX
+  // point at or inside it when Git Bash launched us; otherwise walk up the value looking for it.
+  const roots = [process.env.EXEPATH, process.env.MSYSTEM_PREFIX && dirname(process.env.MSYSTEM_PREFIX)]
+    .filter(Boolean).map((p) => p.replace(/\\/g, '/').replace(/\/+$/, ''));
+  const parts = normalized.split('/');
+  for (let i = parts.length - 1; i > 0; i--) roots.push(parts.slice(0, i).join('/'));
+  for (const root of roots) {
+    if (normalized.toLowerCase().startsWith(`${root.toLowerCase()}/`) &&
+        existsSync(join(root, 'usr', 'bin', 'bash.exe'))) {
+      return normalized.slice(root.length);
+    }
+  }
+  fail(
+    `Not an app route: ${raw}`,
+    'Git Bash converts arguments that start with "/" into Windows paths. Drop the',
+    'leading slash (e.g. dashboard instead of /dashboard) and doorman will add it back.',
+  );
+}
+
 /** The exact command to run one of the toolkit scripts under the active profile. */
 export function command(script) {
   return profileName === 'default' ? `node ${script}` : `node ${script} --profile=${profileName}`;
@@ -296,6 +324,9 @@ export function command(script) {
 export const config = cfg;
 export const flags = parsed.flags;
 export const positionals = parsed.positionals;
+/** The route a script was asked about (first positional, else defaultCheckPath), with any Git Bash
+ *  path conversion already undone so it prints the way it was typed. */
+export const target = undoMsysPathConversion(parsed.positionals[0] ?? cfg.defaultCheckPath);
 export const profile = profileName;
 
 // Created up front so a capture or a screenshot never fails on a missing directory. Vendored, these

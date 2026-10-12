@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/../../scripts/install-deps.mjs\"",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/install-deps.mjs\"",
             "timeout": 20
           }
         ]

@@ -1,8 +1,6 @@
 ---
 name: "get-past-login"
 description: "Get past a sign-in wall that is blocking you, using this workspace's vendored doorman toolkit. Use whenever a page redirects to a login, returns 401 or 403, renders as signed-out, or a saved session has expired — get a working session, then carry on with whatever you were already doing. Also use for any browser check, screenshot or CSS/layout inspection of a page that needs a signed-in user."
-user-invocable: true
-disable-model-invocation: false
 ---
 
 # Getting past a sign-in wall
@@ -163,9 +161,9 @@ Work through these in order; only escalate the interactive sign-in.
 
 - **Get the route right before blaming auth.** A gated page's URL is its framework route (see
   `defaultCheckPath`), *not* the source-folder path. Exit 3 is telling you exactly this.
-- **Git Bash mangles leading-slash args** into Windows paths. Simplest fix: drop the leading slash
-  — `node shot.mjs dashboard` — the scripts add it back. `MSYS_NO_PATHCONV=1` works too, but it
-  disables path conversion for the entire command, which can break other arguments.
+- **Git Bash rewrites leading-slash args** into Windows paths; the scripts detect and undo it. If
+  one ever exits 4 with "Not an app route", drop the leading slash — `node shot.mjs dashboard` —
+  and the scripts add it back. Avoid `MSYS_NO_PATHCONV=1`: it affects every argument in the command.
 - **Let JS-rendered content settle.** Grids and tables fill late; use `--wait="<selector>"`
   rather than screenshotting a blank page and guessing.
 - **A sign-in that succeeds but still checks as unauthenticated is a config problem**, not a

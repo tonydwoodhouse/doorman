@@ -63,15 +63,16 @@ skills, same behavior, different addressing convention.)
 
 | | |
 |---|---|
-| config | `<project>/.claude/doorman/doorman.config.json` — per project, safe to commit |
+| config | `<project>/.doorman/doorman.config.json` — per project, safe to commit |
 | session files | the host's plugin data directory, **outside every project** |
 | screenshots | the host's plugin data directory, per project |
 | Playwright | the host's plugin data directory, once per machine |
 
 Keeping the session out of the repository is deliberate: `storageState.json` is a live session, and
 the surest way to stop it being committed is for it never to be on the project's disk. Run
-`node "$CLAUDE_PLUGIN_ROOT/../../scripts/paths.mjs"` (Claude Code) or
-`node "$PLUGIN_ROOT/../../scripts/paths.mjs"` (Codex) to print exactly where everything resolved.
+`node <plugin>/scripts/paths.mjs` to print exactly where everything resolved (the skills know the
+plugin's path; `<plugin>` is the installed copy under `~/.claude/plugins/cache/` or
+`~/.codex/plugins/cache/`).
 
 The `SessionStart` hook that installs Playwright is guarded by a hash of `scripts/package.json` +
 `package-lock.json`: it acts once, does nothing on every later session, and picks up a version bump
@@ -154,7 +155,7 @@ window that appears, and states that the session files must never be committed o
 Re-running replaces only the marked section in each file. Both are written *after* the payload
 copies, so a failure never leaves a workspace advertising a toolkit whose scripts didn't land.
 
-An existing `.claude/doorman/doorman.config.json` is picked up by a vendored copy too, so a project
+An existing `.doorman/doorman.config.json` is picked up by a vendored copy too, so a project
 that already used a plugin doesn't get configured twice.
 
 ## Configure it (per project)
@@ -200,8 +201,7 @@ should. Both are explained in
 ## Use it directly
 
 You never have to, but every script is a plain CLI. From `tools/doorman/` in a vendored install, or
-under a plugin with `$CLAUDE_PLUGIN_ROOT/../../scripts/` (Claude Code) or
-`$PLUGIN_ROOT/../../scripts/` (Codex) as the prefix:
+under a plugin with the installed plugin's `scripts/` directory as the prefix:
 
 ```bash
 node paths.mjs                                   # where is the config, the session, the browser?
@@ -217,13 +217,18 @@ how to load the saved session in your own Playwright scripts.
 ## What's in here
 
 ```
-doorman/
+doorman/                          # the repository root IS the plugin, for both hosts
 ├── .claude-plugin/
-│   └── marketplace.json          # Claude Code marketplace -> integrations/claude
+│   ├── plugin.json               # Claude Code plugin manifest
+│   └── marketplace.json          # Claude Code marketplace -> this directory
+├── .codex-plugin/
+│   └── plugin.json               # Codex plugin manifest (points at the same skills/ and hooks/)
 ├── .agents/
 │   └── plugins/
-│       └── marketplace.json      # Codex marketplace -> integrations/codex
-├── scripts/                      # THE RUNTIME — shared by both plugins and copied by the installers
+│       └── marketplace.json      # Codex marketplace -> this directory
+├── skills/{get-past-login,setup,vendor}/SKILL.md   # one set of skills, shared by both hosts
+├── hooks/hooks.json              # SessionStart -> scripts/install-deps.mjs (both hosts)
+├── scripts/                      # THE RUNTIME — used by both plugins and copied by the installers
 │   ├── paths.mjs                 # plugin vs vendored: where the config/session/output live
 │   ├── config.mjs                # config + CLI args (defaults < config file < env < flag)
 │   ├── playwright.mjs            # loads Playwright from wherever it is installed
@@ -242,24 +247,12 @@ doorman/
 │   └── README.md                 # the full reference for every mode
 ├── config/
 │   └── doorman.config.example.json   # the placeholder config a vendored install starts from
-├── integrations/
-│   ├── claude/                   # the Claude Code plugin
-│   │   ├── .claude-plugin/plugin.json
-│   │   ├── skills/{get-past-login,setup,vendor}/SKILL.md
-│   │   └── hooks/hooks.json      # SessionStart -> ../../scripts/install-deps.mjs
-│   └── codex/                    # the Codex plugin — same behavior, Codex's own conventions
-│       ├── .codex-plugin/plugin.json
-│       ├── skills/{get-past-login,setup,vendor}/SKILL.md
-│       └── hooks/hooks.json
-├── installers/                   # inputs the installers use; not part of either plugin runtime
+├── installers/                   # vendored install; not used by the plugin runtime
 │   ├── install.ps1               # vendored install (PowerShell 7+)
 │   ├── install.sh                # vendored install (macOS / Linux / Git Bash)
 │   ├── CLAUDE.section.md         # the agent instructions both installers write to CLAUDE.md
 │   ├── AGENTS.section.md         # same instructions, written to AGENTS.md
-│   ├── get-past-login.SKILL.template.md         # optional per-project skill (Claude Code)
-│   └── get-past-login.codex.SKILL.template.md   # optional per-project skill (Codex)
-├── LICENSE                       # MIT
-└── README.md                     # you are here
+│   └── get-past-login.SKILL.template.md   # optional per-project skill (Claude Code and Codex)
 ```
 
 `scripts/` is the single source of truth for the runtime: both plugins execute it in place, and the

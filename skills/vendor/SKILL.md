@@ -1,8 +1,6 @@
 ---
 name: "vendor"
 description: "Copy the doorman toolkit into this project as a self-contained tools/doorman folder, for CI or for teammates without the plugin installed. Only use when asked for a vendored or committed copy."
-user-invocable: true
-disable-model-invocation: false
 ---
 
 # Vendoring doorman into this project
@@ -22,20 +20,21 @@ and moves the saved session back inside the project, which is a real trade-off, 
 | | Plugin (default) | Vendored |
 |---|---|---|
 | scripts | in the plugin, shared, updated with it | committed at `tools/doorman/` |
-| config | `.claude/doorman/doorman.config.json` | `tools/doorman/doorman.config.json` |
+| config | `.doorman/doorman.config.json` | `tools/doorman/doorman.config.json` |
 | session files | plugin data directory, outside the repo | `tools/doorman/`, gitignored |
 | dependencies | installed once per machine | `tools/doorman/node_modules` per project |
 
 The session moving back inside the repo is the part that matters: a vendored install relies on the
 shipped `.gitignore` to keep `storageState.json` out of source control. Say that plainly.
 
-An existing `.claude/doorman/doorman.config.json` is reused automatically by the vendored copy's
+An existing `.doorman/doorman.config.json` is reused automatically by the vendored copy's
 `detect.mjs` run, so configuring twice isn't necessary.
 
 ## Doing it
 
 From the project root, with `$INSTALLERS` as the doorman repo's `installers/` directory
-(`$CLAUDE_PLUGIN_ROOT/../../installers`, or `../../../../installers` relative to this file):
+(`${CLAUDE_PLUGIN_ROOT}/installers`; if that is still literal, as under Codex, it is
+`../../installers` relative to this file):
 
 ```bash
 # macOS / Linux / Git Bash

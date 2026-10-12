@@ -214,7 +214,7 @@ if [ "$install_skill" -eq 1 ]; then
   mkdir -p "$claude_skill_dir"
   copy_one "$script_root/get-past-login.SKILL.template.md" "$claude_skill_dest" ".claude/skills/get-past-login/SKILL.md (reads doorman.config.json)"
   mkdir -p "$codex_skill_dir"
-  copy_one "$script_root/get-past-login.codex.SKILL.template.md" "$codex_skill_dest" ".agents/skills/get-past-login/SKILL.md (reads doorman.config.json)"
+  copy_one "$script_root/get-past-login.SKILL.template.md" "$codex_skill_dest" ".agents/skills/get-past-login/SKILL.md (reads doorman.config.json)"
 fi
 
 # CLAUDE.md/AGENTS.md are written last, so a failure above never leaves a workspace advertising a

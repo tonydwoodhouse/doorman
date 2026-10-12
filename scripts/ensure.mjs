@@ -19,12 +19,11 @@
 //
 // Exit codes: 0 ready | 1 signed in but the check still fails | 3 session fine, route non-200
 //             4 environment problem | 5 sign-in never completed
-import { config, positionals, flags } from './config.mjs';
+import { config, flags, target } from './config.mjs';
 import { EXIT, clearSession } from './session.mjs';
 import { captureSession } from './capture.mjs';
 import { CHECK_SHOT_PATH, loginCommand, reportCheck, runCheck } from './verify.mjs';
 
-const target = positionals[0] ?? config.defaultCheckPath;
 const noLogin = flags['no-login'] === true;
 
 if (flags.clear === true) {

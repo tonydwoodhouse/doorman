@@ -10,6 +10,7 @@ import { chromium } from './playwright.mjs';
 import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs';
 import {
   EXIT, SESSION_STORAGE_PATH, STATE_PATH, command, config, joinBasePath, profile, stripBasePath,
+  undoMsysPathConversion,
 } from './config.mjs';
 
 // Re-exported so a custom script only needs one import for the common case.
@@ -19,7 +20,7 @@ const ABSOLUTE_URL = /^[a-z][a-z0-9+.-]*:\/\//i;
 
 /** Resolve a path (or absolute URL) beneath baseUrl, refusing to leave the app origin. */
 export function resolveTarget(pathOrUrl) {
-  const raw = String(pathOrUrl);
+  const raw = undoMsysPathConversion(String(pathOrUrl));
   let url;
   try {
     url = ABSOLUTE_URL.test(raw)

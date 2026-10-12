@@ -13,9 +13,9 @@
 // Exit codes: 0 written | 1 session invalid | 2 no session yet
 //             3 session fine but route non-200 | 4 environment problem (not auth)
 //
-// NOTE (Git Bash on Windows): prefix with MSYS_NO_PATHCONV=1 when passing a /path.
+// Git Bash on Windows rewrites a leading-slash arg into a Windows path; config.mjs undoes it.
 import { isAbsolute, join } from 'path';
-import { OUTPUT_DIR, OUTPUT_SUFFIX, config, flags, positionals } from './config.mjs';
+import { OUTPUT_DIR, OUTPUT_SUFFIX, flags, positionals, target } from './config.mjs';
 import {
   EXIT, assessSession, describeSession, goto, launchBrowser, newSessionContext, requireSession,
   resolveTarget,
@@ -25,7 +25,6 @@ import { loginCommand } from './verify.mjs';
 const fullPage = flags.full === true;
 const waitFor = typeof flags.wait === 'string' ? flags.wait : null;
 
-const target = positionals[0] ?? config.defaultCheckPath;
 const targetUrl = resolveTarget(target);
 const outPath = resolvePath(positionals[1] ?? defaultName(targetUrl));
 requireSession();

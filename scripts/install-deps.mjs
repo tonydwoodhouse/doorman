@@ -1,7 +1,7 @@
 // Make sure Playwright is installed for the plugin, without making anyone wait for it.
 //
-// Runs on SessionStart (Claude Code and Codex both support that hook event, and both invoke this
-// same script — see integrations/claude/hooks/hooks.json and integrations/codex/hooks/hooks.json).
+// Runs on SessionStart (Claude Code and Codex both support that hook event, and both run this same
+// script from the one hooks/hooks.json at the plugin root).
 // The plugin directory itself is the wrong place to install into — it can be read-only, and it is
 // replaced wholesale when the plugin updates — so dependencies go into the host's plugin data
 // directory instead, once per machine rather than once per project.
@@ -21,21 +21,14 @@
 import { spawn } from 'child_process';
 import { createHash } from 'crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
-import { homedir } from 'os';
-import { dirname, join, resolve } from 'path';
+import { join } from 'path';
 import { fileURLToPath } from 'url';
+// paths.mjs resolves the data directory — and, run from the hook, records it so the agent's own
+// shell (which the host gives no plugin variables) finds the same one. Importing it is what makes
+// the hook and every later script agree on where Playwright lives.
+import { DEPS_DIR, SCRIPT_DIR as SCRIPTS_DIR } from './paths.mjs';
 
 const SELF = fileURLToPath(import.meta.url);
-// This file lives directly in scripts/, so there's no plugin-root guesswork left to do.
-const SCRIPTS_DIR = dirname(SELF);
-// DOORMAN_DATA_DIR wins outright; PLUGIN_DATA is Codex's own name; CLAUDE_PLUGIN_DATA is what
-// Claude Code sets (and what Codex also sets, for compatibility with existing plugin hooks) —
-// see scripts/paths.mjs for the same precedence used everywhere else.
-const DATA_DIR = resolve(
-  process.env.DOORMAN_DATA_DIR ?? process.env.PLUGIN_DATA ?? process.env.CLAUDE_PLUGIN_DATA ??
-  join(homedir(), '.doorman', 'plugin-data'),
-);
-const DEPS_DIR = resolve(process.env.DOORMAN_DEPS_DIR ?? join(DATA_DIR, 'deps'));
 const STAMP = join(DEPS_DIR, '.installed');
 const RUNNING = join(DEPS_DIR, '.installing');
 const LOG = join(DEPS_DIR, 'install.log');
