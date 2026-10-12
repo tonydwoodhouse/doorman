@@ -132,7 +132,8 @@ Flags (both installers):
 | `-ToolsDir <rel>` | `--tools-dir <rel>` | Where to put it (default `tools/doorman`). |
 | `-InstallSkill` | `--install-skill` | Also drop per-project skills — `.claude/skills/get-past-login/SKILL.md` and `.agents/skills/get-past-login/SKILL.md`. Only useful if some contributors don't have a plugin. |
 | `-Bootstrap` | `--bootstrap` | Run `npm install` + `npx playwright install chromium` after copying. |
-| `-Force` | `--force` | Overwrite existing files (otherwise existing files are skipped). |
+| `-Force` | `--force` | Overwrite existing toolkit files (otherwise they are skipped). Never touches `doorman.config.json`. |
+| `-ResetConfig` | `--reset-config` | Replace `doorman.config.json` with a freshly detected one; the old file is kept as `doorman.config.json.<timestamp>.bak`. |
 | `-Uninstall` | `--uninstall` | Remove what was installed (see below). |
 
 Vendored, everything lives together in `tools/doorman/`: the scripts, the config, and the session
@@ -159,10 +160,16 @@ does), so budget for re-capturing and re-uploading the secret on a schedule, or 
 starts failing until someone does.
 
 The installer never copies per-developer artifacts (`node_modules/`, session files, `*.png`) and
-**skips files that already exist** unless `-Force`/`--force`, so re-running to pick up an update
-won't clobber a customized `doorman.config.json`. When it creates the config it runs
-`node detect.mjs --write` to fill in `baseUrl`; that needs only Node builtins, so it happens before
-any `npm install`, and it never fails the install.
+**skips files that already exist** unless `-Force`/`--force`.
+
+`doorman.config.json` is **yours**: the installer creates it once and never writes it again, with or
+without `--force`. It is created by `node detect.mjs --write`, which fills in `baseUrl` (and starts
+from the project's plugin config, `.doorman/doorman.config.json`, if there is one); that needs only
+Node builtins, so it happens before any `npm install`, and it never fails the install. On every later
+run the installer checks the existing file with `node check-config.mjs` and reports problems —
+including settings it doesn't recognize — without changing it. `doorman.config.example.json` beside
+it is refreshed on each install, as a reference for new settings. `--reset-config` is the only way
+to have the installer replace it, and it keeps the old one as a `.bak`.
 
 Every vendored install also writes a clearly marked `doorman` section into the workspace's
 `CLAUDE.md` **and** `AGENTS.md` (from [`installers/CLAUDE.section.md`](installers/CLAUDE.section.md)
@@ -258,6 +265,7 @@ doorman/                          # the repository root IS the plugin, for both 
 │   ├── capture.mjs               # the interactive sign-in
 │   ├── ensure.mjs                # check, sign in if needed, re-verify — the one entry point
 │   ├── detect.mjs                # find baseUrl in the target project's own files
+│   ├── check-config.mjs          # validate doorman.config.json without changing it
 │   ├── login-once.mjs            # interactive capture on its own
 │   ├── auth-check.mjs            # headless: verify the saved session
 │   ├── shot.mjs                  # headless: screenshot a gated page (verifies first)
@@ -267,7 +275,7 @@ doorman/                          # the repository root IS the plugin, for both 
 │   ├── .gitignore                # ignores node_modules / session files / *.png
 │   └── README.md                 # the full reference for every mode
 ├── config/
-│   └── doorman.config.example.json   # the placeholder config a vendored install starts from
+│   └── doorman.config.example.json   # reference config; a vendored install copies it beside its own
 ├── installers/                   # vendored install; not used by the plugin runtime
 │   ├── install.ps1               # vendored install (PowerShell 7+)
 │   ├── install.sh                # vendored install (macOS / Linux / Git Bash)
@@ -296,7 +304,8 @@ session automatically.
 
 **Vendored:** pull this repo, then re-run the installer against each project with the same flags.
 Existing files are skipped, so only new toolkit files land; add `-Force`/`--force` to overwrite the
-scripts while leaving your config alone.
+scripts. Your `doorman.config.json` is left byte-for-byte alone either way, and checked against the
+new version.
 
 ## Uninstalling a vendored copy
 

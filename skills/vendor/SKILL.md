@@ -51,6 +51,8 @@ only if some contributors won't have the plugin, since it duplicates what the pl
 
 The installer also writes a marked `doorman` section into the project's `CLAUDE.md` and `AGENTS.md`,
 skips files that already exist unless `--force`, and runs URL detection when it creates the config.
+An existing `doorman.config.json` is never overwritten — not even with `--force` — only checked;
+`--reset-config` replaces it (keeping a `.bak`) if that's genuinely what the developer wants.
 `--uninstall` removes exactly what it added, including any saved session.
 
 Afterwards, run the commands from `tools/doorman/` (`node ensure.mjs`, `node shot.mjs /route`) —

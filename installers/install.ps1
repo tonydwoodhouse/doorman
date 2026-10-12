@@ -8,8 +8,11 @@
   anyone not using the Claude Code or Codex plugin. Copies scripts/ (plus
   config/doorman.config.example.json) into <Workspace>/<ToolsDir> (default tools/doorman). Never
   copies per-developer artifacts (node_modules, storageState*.json, *.png). Existing files are
-  skipped unless -Force is given, so re-running is safe and won't clobber a customized
-  doorman.config.json.
+  skipped unless -Force is given, so re-running is safe.
+
+  doorman.config.json is yours, not the installer's: it is created once (by detect.mjs, which fills
+  in baseUrl) and never overwritten after that — not even by -Force. An upgrade checks it and
+  reports problems instead. -ResetConfig replaces it, keeping the old one as a timestamped .bak.
 
 .PARAMETER Workspace
   Path to the target repo root. Defaults to the current directory.
@@ -27,7 +30,11 @@
   After copying, run `npm install` and `npx playwright install chromium` in the toolkit folder.
 
 .PARAMETER Force
-  Overwrite files that already exist in the target.
+  Overwrite the toolkit files that already exist in the target. Never doorman.config.json.
+
+.PARAMETER ResetConfig
+  Replace doorman.config.json with a freshly detected one. The old file is kept beside it as
+  doorman.config.json.<timestamp>.bak.
 
 .PARAMETER Uninstall
   Remove what this installer added: the toolkit files, the CLAUDE.md and AGENTS.md sections, the
@@ -52,6 +59,7 @@ param(
   [switch]$InstallSkill,
   [switch]$Bootstrap,
   [switch]$Force,
+  [switch]$ResetConfig,
   [switch]$Uninstall
 )
 
@@ -76,16 +84,18 @@ $claudeSkillDest = Join-Path $claudeSkillDir 'SKILL.md'
 $codexSkillDir = Join-Path $Workspace '.agents/skills/get-past-login'
 $codexSkillDest = Join-Path $codexSkillDir 'SKILL.md'
 
-# The payload: everything in scripts/ except per-developer artifacts, plus the placeholder config
-# from config/ (the plugins have no use for it, so it doesn't live in scripts/). Enumerated rather
-# than listed, so a new script is picked up automatically. This list doubles as the manifest for
-# -Uninstall, so it only ever removes what it installed.
-$skip = @('node_modules', 'storageState.json', 'sessionStorage.json')
+# The payload — the files the installer manages: everything in scripts/ except per-developer
+# artifacts, plus the example config from config/ (the plugins have no use for it, so it doesn't
+# live in scripts/). Enumerated rather than listed, so a new script is picked up automatically.
+# doorman.config.json is deliberately not in it: that file is the developer's (see below).
+$skipPatterns = @('node_modules', 'storageState*.json', 'sessionStorage*.json', '*.png', 'doorman.config.json')
 $payload = @(
   Get-ChildItem -Path $scriptsDir -Force |
-    Where-Object { $skip -notcontains $_.Name -and $_.Name -notlike '*.png' } |
+    Where-Object { $name = $_.Name; -not ($skipPatterns | Where-Object { $name -like $_ }) } |
     ForEach-Object { [pscustomobject]@{ Name = $_.Name; FullName = $_.FullName } }
-) + [pscustomobject]@{ Name = 'doorman.config.json'; FullName = (Join-Path $configDir 'doorman.config.example.json') }
+) + [pscustomobject]@{ Name = 'doorman.config.example.json'; FullName = (Join-Path $configDir 'doorman.config.example.json') }
+$configName = 'doorman.config.json'
+$configPath = Join-Path $dest $configName
 
 # ---------------------------------------------------------------------------
 # Uninstall
@@ -133,6 +143,10 @@ if ($Uninstall) {
         Remove-Item $target -Force -Recurse
         $removed.Add("$ToolsDir/$($item.Name)")
       }
+    }
+    if (Test-Path $configPath) {
+      Remove-Item $configPath -Force
+      $removed.Add("$ToolsDir/$configName")
     }
     # Saved sessions are live credentials — removing the toolkit should not leave them behind.
     foreach ($pattern in @('storageState*.json', 'sessionStorage*.json', 'auth-check*.png', 'shot-*.png')) {
@@ -196,10 +210,6 @@ $agentsSection = Get-Section 'AGENTS.section.md'
 
 New-Item -ItemType Directory -Force -Path $dest | Out-Null
 
-# Whether this run creates the config, which decides if URL detection may write to it below.
-$configPath = Join-Path $dest 'doorman.config.json'
-$configIsNew = -not (Test-Path $configPath) -or $Force
-
 $copied = 0; $skipped = 0
 foreach ($item in $payload) {
   $target = Join-Path $dest $item.Name
@@ -258,29 +268,50 @@ function Update-InstructionFile([string]$path, [string]$section, [string]$label)
 Update-InstructionFile $claudePath $claudeSection 'CLAUDE.md'
 Update-InstructionFile $agentsPath $agentsSection 'AGENTS.md'
 
-# Fill in baseUrl from the project's own files, so the developer usually has nothing to edit.
-# detect.mjs uses Node builtins only, so this runs before npm install. It is never fatal: when
-# it finds nothing it writes "configured": false, which keeps every script stopping with
-# instructions rather than testing the shipped placeholder URL.
-if ($configIsNew) {
-  if (Get-Command node -ErrorAction SilentlyContinue) {
-    Write-Host "`nDetecting the dev server URL from this project..." -ForegroundColor Cyan
+# The config. It belongs to the developer, so an existing one is only ever checked, never written —
+# -Force included. -ResetConfig is the one way to replace it, and keeps the old one beside it.
+Write-Host ''
+if ($ResetConfig -and (Test-Path $configPath)) {
+  $backup = "$configPath.$(Get-Date -Format 'yyyyMMdd-HHmmss').bak"
+  Move-Item $configPath $backup
+  Write-Host "  backed up: $ToolsDir/$configName -> $(Split-Path -Leaf $backup)" -ForegroundColor DarkYellow
+}
+$haveNode = [bool](Get-Command node -ErrorAction SilentlyContinue)
+if (Test-Path $configPath) {
+  Write-Host "Keeping your $ToolsDir/$configName (installs never change it; -ResetConfig replaces it)." -ForegroundColor Cyan
+  if ($haveNode) {
+    Push-Location $dest
+    try {
+      & node check-config.mjs
+      if ($LASTEXITCODE -ne 0) {
+        Write-Host "  Left as it is — fix the above in $ToolsDir/$configName. New settings are in $configName's example beside it." -ForegroundColor DarkYellow
+      }
+    } finally { Pop-Location }
+  }
+} else {
+  # Created by detect.mjs, which fills in baseUrl from the project's own files (and starts from the
+  # plugin's config when the project has one). Node builtins only, so this runs before npm install.
+  # It is never fatal: when it finds nothing it writes "configured": false, which keeps every
+  # script stopping with instructions rather than testing the placeholder URL.
+  if ($haveNode) {
+    Write-Host "Creating $ToolsDir/$configName — detecting the dev server URL from this project..." -ForegroundColor Cyan
     Push-Location $dest
     try {
       & node detect.mjs --write --root $Workspace
     } catch {
       Write-Host "  detection failed: $($_.Exception.Message)" -ForegroundColor DarkYellow
     } finally { Pop-Location }
-  } else {
-    # No Node, so nothing can detect or guard. Mark it unconfigured by hand — inserting the line
-    # rather than rewriting the file keeps this in step with config/doorman.config.example.json.
-    Write-Host "`n  node not found, so the URL could not be detected." -ForegroundColor DarkYellow
-    $configLines = @(Get-Content -Path $configPath)
+  }
+  if (-not (Test-Path $configPath)) {
+    # No Node (or detection failed), so nothing can detect or guard. Start from the example, marked
+    # unconfigured — inserting the line rather than rewriting keeps it in step with the example.
+    if (-not $haveNode) { Write-Host '  node not found, so the URL could not be detected.' -ForegroundColor DarkYellow }
+    $configLines = @(Get-Content -Path (Join-Path $configDir 'doorman.config.example.json'))
     $configLines = @($configLines[0], '  "configured": false,') + $configLines[1..($configLines.Count - 1)]
     # -NoNewline + explicit LF joins: Set-Content would otherwise write CRLF and the file would
     # stop matching install.sh's output byte for byte.
     Set-Content -Path $configPath -Value (($configLines -join "`n") + "`n") -Encoding utf8NoBOM -NoNewline
-    Write-Host "  marked $ToolsDir/doorman.config.json unconfigured — set baseUrl by hand." -ForegroundColor DarkYellow
+    Write-Host "  created $ToolsDir/$configName from the example, marked unconfigured — set baseUrl by hand." -ForegroundColor DarkYellow
   }
 }
 

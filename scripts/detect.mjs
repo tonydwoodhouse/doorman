@@ -565,7 +565,7 @@ if (opts.json) {
 // The five project-specific fields, in the order they should appear. Creating the file from this
 // (rather than writing only what was detected) means the fields detection *can't* answer —
 // loginPath, authenticatedSelector — are visibly present and waiting, instead of absent and
-// forgotten. It matches installer/doorman.config.json field for field.
+// forgotten. It matches config/doorman.config.example.json field for field.
 const SKELETON = {
   appName: 'My App',
   baseUrl: 'https://localhost:5001',

@@ -98,7 +98,9 @@ the five fields that are genuinely project-specific — everything else in the t
 optional and falls back to a built-in default, so you only add a field when you need to change it.
 It contains URLs and selectors, never secrets, so commit it and the rest of the team gets it free.
 (See [Where the files live](#where-the-files-live) for which directory it goes in; `detect.mjs`
-creates it if it isn't there yet.)
+creates it if it isn't there yet.) Once it exists it is yours: no install, upgrade or `--force`
+rewrites it. `node check-config.mjs` validates it without changing anything, and every script
+warns about a setting it doesn't recognize — usually a typo that would otherwise be silently ignored.
 
 ```json
 {

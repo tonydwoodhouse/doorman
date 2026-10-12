@@ -5,10 +5,15 @@
 # anyone not using the Claude Code or Codex plugin. Copies scripts/ (plus
 # config/doorman.config.example.json) into <workspace>/<tools-dir> (default tools/doorman). Never
 # copies per-developer artifacts (node_modules, storageState*.json, *.png). Existing files are
-# skipped unless --force, so re-running won't clobber a customized doorman.config.json.
+# skipped unless --force.
+#
+# doorman.config.json is yours, not the installer's: it is created once (by detect.mjs, which fills
+# in baseUrl) and never overwritten after that — not even by --force. An upgrade checks it and
+# reports problems instead. --reset-config replaces it, keeping the old one as a timestamped .bak.
 #
 # Usage:
 #   ./install.sh [--workspace PATH] [--tools-dir REL] [--install-skill] [--bootstrap] [--force]
+#                [--reset-config]
 #   ./install.sh [--workspace PATH] [--tools-dir REL] --uninstall
 #
 # --uninstall removes only what this installer added: the toolkit files, the CLAUDE.md and
@@ -25,6 +30,7 @@ tools_dir="tools/doorman"
 install_skill=0
 bootstrap=0
 force=0
+reset_config=0
 uninstall=0
 
 while [ $# -gt 0 ]; do
@@ -34,6 +40,7 @@ while [ $# -gt 0 ]; do
     --install-skill) install_skill=1; shift ;;
     --bootstrap) bootstrap=1; shift ;;
     --force) force=1; shift ;;
+    --reset-config) reset_config=1; shift ;;
     --uninstall) uninstall=1; shift ;;
     -h|--help) grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
@@ -59,28 +66,31 @@ claude_skill_dest="$claude_skill_dir/SKILL.md"
 codex_skill_dir="$workspace/.agents/skills/get-past-login"
 codex_skill_dest="$codex_skill_dir/SKILL.md"
 
-# The payload: everything in scripts/ except per-developer artifacts, plus the placeholder config
-# from config/ (the plugins have no use for it, so it doesn't live in scripts/). Enumerated rather
-# than listed, so a new script is picked up automatically. This list doubles as the manifest for
-# --uninstall, so it only ever removes what it installed.
+# The payload — the files the installer manages: everything in scripts/ except per-developer
+# artifacts, plus the example config from config/ (the plugins have no use for it, so it doesn't
+# live in scripts/). Enumerated rather than listed, so a new script is picked up automatically.
+# doorman.config.json is deliberately not in it: that file is the developer's (see below).
 payload_names=()
 for src in "$scripts_dir"/* "$scripts_dir"/.gitignore; do
   [ -e "$src" ] || continue
   name="$(basename "$src")"
   case "$name" in
-    node_modules|storageState.json|sessionStorage.json|*.png) continue ;;
+    node_modules|storageState*.json|sessionStorage*.json|*.png|doorman.config.json) continue ;;
   esac
   payload_names+=("$name")
 done
-payload_names+=("doorman.config.json")
+payload_names+=("doorman.config.example.json")
 
 # Where each payload file comes from.
 payload_src() {
   case "$1" in
-    doorman.config.json) echo "$config_dir/doorman.config.example.json" ;;
+    doorman.config.example.json) echo "$config_dir/doorman.config.example.json" ;;
     *) echo "$scripts_dir/$1" ;;
   esac
 }
+config_name="doorman.config.json"
+config_path="$dest/$config_name"
+
 
 # ---------------------------------------------------------------------------
 # Uninstall
@@ -130,6 +140,10 @@ if [ "$uninstall" -eq 1 ]; then
         removed+=("$tools_dir/$name")
       fi
     done
+    if [ -e "$config_path" ]; then
+      rm -f "$config_path"
+      removed+=("$tools_dir/$config_name")
+    fi
     # Saved sessions are live credentials — removing the toolkit should not leave them behind.
     for pattern in 'storageState*.json' 'sessionStorage*.json' 'auth-check*.png' 'shot-*.png'; do
       while IFS= read -r found; do
@@ -191,11 +205,6 @@ fi
 # Install
 # ---------------------------------------------------------------------------
 mkdir -p "$dest"
-
-# Whether this run creates the config, which decides if URL detection may write to it below.
-config_path="$dest/doorman.config.json"
-config_is_new=1
-[ -e "$config_path" ] && [ "$force" -ne 1 ] && config_is_new=0
 
 copy_one() {  # $1 = src file, $2 = dest file, $3 = label
   if [ -e "$2" ] && [ "$force" -ne 1 ]; then
@@ -275,22 +284,37 @@ update_instruction_file() {  # $1 = target path, $2 = section text, $3 = label (
 update_instruction_file "$claude_path" "$(section_for CLAUDE.section.md)" "CLAUDE.md"
 update_instruction_file "$agents_path" "$(section_for AGENTS.section.md)" "AGENTS.md"
 
-# Fill in baseUrl from the project's own files, so the developer usually has nothing to edit.
-# detect.mjs uses Node builtins only, so this runs before npm install. It is never fatal: when
-# it finds nothing it writes "configured": false, which keeps every script stopping with
-# instructions rather than testing the shipped placeholder URL.
-if [ "$config_is_new" -eq 1 ]; then
-  echo ""
-  if command -v node >/dev/null 2>&1; then
-    echo "Detecting the dev server URL from this project..."
+# The config. It belongs to the developer, so an existing one is only ever checked, never written —
+# --force included. --reset-config is the one way to replace it, and keeps the old one beside it.
+echo ""
+if [ "$reset_config" -eq 1 ] && [ -e "$config_path" ]; then
+  backup="$config_path.$(date +%Y%m%d-%H%M%S).bak"
+  mv "$config_path" "$backup"
+  echo "  backed up: $tools_dir/$config_name -> $(basename "$backup")"
+fi
+have_node=0
+command -v node >/dev/null 2>&1 && have_node=1
+if [ -e "$config_path" ]; then
+  echo "Keeping your $tools_dir/$config_name (installs never change it; --reset-config replaces it)."
+  if [ "$have_node" -eq 1 ]; then
+    ( cd "$dest" && node check-config.mjs ) \
+      || echo "  Left as it is — fix the above in $tools_dir/$config_name. New settings are in $config_name's example beside it."
+  fi
+else
+  # Created by detect.mjs, which fills in baseUrl from the project's own files (and starts from the
+  # plugin's config when the project has one). Node builtins only, so this runs before npm install.
+  # It is never fatal: when it finds nothing it writes "configured": false, which keeps every
+  # script stopping with instructions rather than testing the placeholder URL.
+  if [ "$have_node" -eq 1 ]; then
+    echo "Creating $tools_dir/$config_name — detecting the dev server URL from this project..."
     ( cd "$dest" && node detect.mjs --write --root "$workspace" ) || true
-  else
-    # No Node, so nothing can detect or guard. Mark it unconfigured by hand — inserting the line
-    # rather than rewriting the file keeps this in step with config/doorman.config.example.json.
-    echo "  node not found, so the URL could not be detected."
-    { echo '{'; echo '  "configured": false,'; tail -n +2 "$config_path"; } > "$config_path.tmp" \
-      && mv "$config_path.tmp" "$config_path"
-    echo "  marked $tools_dir/doorman.config.json unconfigured — set baseUrl by hand."
+  fi
+  if [ ! -e "$config_path" ]; then
+    # No Node (or detection failed), so nothing can detect or guard. Start from the example, marked
+    # unconfigured — inserting the line rather than rewriting keeps it in step with the example.
+    [ "$have_node" -eq 1 ] || echo "  node not found, so the URL could not be detected."
+    { echo '{'; echo '  "configured": false,'; tail -n +2 "$config_dir/doorman.config.example.json"; } > "$config_path"
+    echo "  created $tools_dir/$config_name from the example, marked unconfigured — set baseUrl by hand."
   fi
 fi
 

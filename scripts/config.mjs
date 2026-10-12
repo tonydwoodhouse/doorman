@@ -192,7 +192,21 @@ function loadFile() {
   }
 }
 
-const cfg = { ...DEFAULTS, ...loadFile() };
+const fileConfig = loadFile();
+const cfg = { ...DEFAULTS, ...fileConfig };
+
+/**
+ * Settings in the file that doorman doesn't know — usually a typo, which would otherwise be
+ * silently ignored, or a setting from another version. Reported, never removed: the file is the
+ * developer's. Keys starting with "$" or "_" ($schema, _comment) are left alone.
+ */
+export const unknownConfigKeys = Object.keys(fileConfig)
+  .filter((key) => !(key in DEFAULTS) && !/^[$_]/.test(key));
+if (unknownConfigKeys.length) {
+  console.error(`doorman: ${configLabel} has setting(s) doorman doesn't recognize, which are ignored: ` +
+    `${unknownConfigKeys.join(', ')}. A typo? The settings are listed in doorman.config.example.json ` +
+    'and the README.');
+}
 
 // Env override for one-off runs / CI without editing the file.
 cfg.baseUrl = process.env.DOORMAN_BASE_URL ?? cfg.baseUrl;

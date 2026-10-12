@@ -4,7 +4,7 @@
   "type": "module",
   "description": "Development tasks for the doorman repository. The runtime's own manifest is scripts/package.json.",
   "scripts": {
-    "test": "node --test --test-concurrency=1 test/verdict.test.mjs test/origins.test.mjs test/install-deps.test.mjs test/verify.e2e.test.mjs test/session-data.e2e.test.mjs",
+    "test": "node --test --test-concurrency=1 test/verdict.test.mjs test/origins.test.mjs test/install-deps.test.mjs test/verify.e2e.test.mjs test/session-data.e2e.test.mjs test/installers.test.mjs",
     "test:unit": "node --test test/verdict.test.mjs test/origins.test.mjs"
   },
   "engines": {
