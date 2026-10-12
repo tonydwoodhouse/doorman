@@ -1,12 +1,51 @@
 // The interactive sign-in capture, shared by login-once.mjs and ensure.mjs.
 //
 // This is the one step that must stay human: a real browser opens, the developer signs in
-// (including MFA), and only the resulting session is saved. No credentials are ever read,
-// typed or stored by the toolkit.
+// (including MFA), and only the resulting session is saved. No password or MFA response is ever
+// read, typed or stored by the toolkit — but the saved session is itself a bearer credential while
+// it lasts, so it is written owner-only, kept out of Git, and trimmed to `captureOrigins`.
+import { relative } from 'path';
 import { SESSION_STORAGE_PATH, STATE_PATH, config, profile, stripBasePath } from './config.mjs';
+import { describeRow, filterState, originWarnings, summarizeState } from './origins.mjs';
+import { gitExposure, writePrivateFile } from './secure-files.mjs';
 import {
   EXIT, describeSession, goto, launchBrowser, listIndexedDBNames, resolveTarget, saveSessionStorage,
 } from './session.mjs';
+
+/**
+ * Refuse to save a session where Git could pick it up. Checked before the browser opens, so the
+ * developer never signs in only to have the result thrown away.
+ */
+function refuseIfTrackable() {
+  for (const path of [STATE_PATH, SESSION_STORAGE_PATH]) {
+    const { exposed, repo } = gitExposure(path);
+    if (!exposed) continue;
+    const shown = repo ? relative(repo, path) : path;
+    console.error(`Refusing to save a session to ${path}:`);
+    console.error(`it is inside the Git repository${repo ? ` at ${repo}` : ''} and not ignored, so it could be committed.`);
+    console.error('A saved session works like a password until it expires. Either:');
+    console.error(`  - ignore it: add "${shown.replace(/\\/g, '/')}" (or storageState*.json and sessionStorage*.json)`);
+    console.error('    to that repository\'s .gitignore — and if it is already tracked, git rm --cached it; or');
+    console.error('  - set DOORMAN_SESSION_DIR to a directory outside the repository.');
+    return true;
+  }
+  return false;
+}
+
+/** Print what the saved session holds, by host and count. Never a value. */
+function reportSavedOrigins(state, dropped) {
+  const appHost = new URL(config.baseUrl).hostname;
+  // The app first; the rest (usually the identity provider) in the order the sign-in visited them.
+  const summary = summarizeState(state).sort((a, b) => (b.host === appHost) - (a.host === appHost));
+  const width = Math.max(...summary.map((r) => r.host.length), 4);
+  console.log('   Saved for (values not shown):');
+  if (summary.length === 0) console.log('     nothing — the sign-in left no cookies or storage');
+  for (const r of summary) console.log(`     ${r.host.padEnd(width)}  ${describeRow(r)}`);
+  for (const r of dropped) console.log(`   Dropped (not in captureOrigins): ${r.host} (${describeRow(r)})`);
+  for (const note of originWarnings(summary, { appHost, idpHostPattern: config.idpHostPattern })) {
+    console.log(`   Note: ${note}`);
+  }
+}
 
 function humanTimeout(ms) {
   return ms >= 60000 ? `${Math.round(ms / 60000)} minute(s)` : `${Math.round(ms / 1000)} second(s)`;
@@ -22,6 +61,8 @@ export async function captureSession() {
     appName, loginPath, loginPathPattern, idpHostPattern,
     authenticatedUrlPattern, authenticatedSelector, viewport, loginTimeoutMs,
   } = config;
+
+  if (refuseIfTrackable()) return EXIT.ENVIRONMENT;
 
   const timeoutText = humanTimeout(loginTimeoutMs);
   const loginUrl = resolveTarget(loginPath).href;
@@ -74,18 +115,27 @@ export async function captureSession() {
         .waitFor({ state: 'visible', timeout: loginTimeoutMs });
     }
 
-    await context.storageState({ path: STATE_PATH, indexedDB: config.captureIndexedDB });
+    const captured = await context.storageState({ indexedDB: config.captureIndexedDB });
+    const { state, dropped } = filterState(captured, config.captureOrigins, new URL(config.baseUrl).hostname);
+    let restricted = writePrivateFile(STATE_PATH, `${JSON.stringify(state, null, 2)}\n`);
     // Cookies and localStorage come from storageState(); sessionStorage does not, and MSAL
     // (Entra ID) keeps its tokens there by default.
-    const sessionKeys = await saveSessionStorage(page);
+    const sidecar = await saveSessionStorage(page);
+    restricted &&= sidecar.restricted;
+    const sessionKeys = sidecar.keys;
     // IndexedDB is only in the snapshot if it was asked for, so say so while the app is still
     // open and we can see whether it uses any.
     const indexedDbNames = config.captureIndexedDB ? [] : await listIndexedDBNames(page);
 
     console.log('=== SIGN-IN COMPLETE ===');
     console.log(`✅ Session saved to ${STATE_PATH}`);
+    reportSavedOrigins(state, dropped);
     if (sessionKeys > 0) {
       console.log(`   Plus ${sessionKeys} sessionStorage key(s) -> ${SESSION_STORAGE_PATH}`);
+    }
+    if (!restricted) {
+      console.log('   ⚠️  Could not restrict the session files to your user account; other accounts on');
+      console.log('   this machine may be able to read them. Check the folder\'s permissions.');
     }
     if (config.captureIndexedDB) console.log('   IndexedDB included in the snapshot.');
     else if (indexedDbNames.length > 0) {

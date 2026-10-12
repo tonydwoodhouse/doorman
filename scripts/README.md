@@ -11,9 +11,11 @@ your authenticated session is saved to `storageState.json`, and every later head
 **replays** it — until it expires (~4–8h), when you sign in again.
 
 > `storageState.json` (and `sessionStorage.json`, when your app uses it) contain a live session.
-> They are personal to you, and anyone holding them is signed in as you. Never commit or share
-> them. As a plugin they are kept outside your project entirely; vendored, they sit in this folder
-> and the shipped `.gitignore` keeps them out of source control.
+> No password or MFA response is in them, but they are bearer credentials: anyone holding them is
+> signed in as you until the session expires. Never commit or share them. They are written
+> owner-only; as a plugin they are kept outside your project entirely; vendored, they sit in this
+> folder and the shipped `.gitignore` keeps them out of source control — and a capture refuses to
+> save them anywhere Git could pick them up. See [Session data on disk](#session-data-on-disk).
 
 ## Where the files live
 
@@ -159,6 +161,7 @@ output.
 | `navigationTimeoutMs` | How long a page load may take before the check reports it as inconclusive (exit 3). Default 30 s. |
 | `captureSessionStorage` | Also capture/replay `sessionStorage` (default `true`). Required for MSAL / Entra ID SPAs — see below. |
 | `captureIndexedDB` | Include IndexedDB in the session snapshot (default `false`). Turn on for Firebase Authentication and other SDKs that store tokens there — see below. |
+| `captureOrigins` | Which sites' cookies and storage the saved session keeps. `"flow"` (default) keeps everything the sign-in set. An array of hosts — `"app.example.com"`, `"*.example.com"` or a full origin — keeps only those, plus the app's own host. See [Session data on disk](#session-data-on-disk). |
 | `expiryWarningMs` | Warn when the earliest cookie expiry is closer than this. Default 15 min. |
 | `configured` | Set to `false` only by `detect.mjs` when it found no URL, or by the installer when Node wasn't available. Every script then stops with exit 4 and instructions. Delete the line once `baseUrl` is right. Absent means configured, which is the normal case. |
 
@@ -268,6 +271,39 @@ Paths are then resolved beneath it (`/dashboard` → `https://localhost:5001/mya
 **stripped** — so you write them app-relative and they keep working if the base path changes. A
 path that already includes the base path is not prefixed twice.
 
+## Session data on disk
+
+A capture saves what the sign-in left in a **fresh, empty** browser: cookies and storage for the
+app, and usually for the identity provider it went through. None of it is a password, but all of
+it is a bearer credential until it expires.
+
+- **Owner-only, atomic.** Each session file is written to a temporary file, restricted (`0600`; on
+  Windows an ACL naming only your account), then renamed into place. A dedicated session directory
+  is `0700` / owner-only too. If the platform refuses, the capture says so rather than failing.
+- **Reported, not printed.** The capture lists each host it saved data for, with counts only:
+
+  ```
+  ✅ Session saved to …/storageState.json
+     Saved for (values not shown):
+       app.example.com    2 cookies, 3 localStorage keys
+       login.example.net  4 cookies
+     Note: Also saved: login.example.net (4 cookies). Expected if it's your identity provider
+     (set idpHostPattern to say so); otherwise list the hosts you expect in captureOrigins.
+  ```
+
+  It also notes cookies scoped to a parent domain (`.example.com`), which every sibling site
+  receives.
+- **`captureOrigins`.** `"flow"` keeps everything above. A host list keeps only those hosts plus the
+  app (and any cookie the browser would send to them). Dropping the identity provider is stricter,
+  at a cost: an expired app session then always needs a full sign-in, rather than a quick bounce
+  through the provider's still-valid session.
+- **Never where Git can commit it.** Before the browser opens, the capture asks Git whether the
+  session files would be picked up. Inside a repository they must be ignored — and not already
+  tracked — or it stops with exit 4 and the fix (add the ignore rule, or point
+  `DOORMAN_SESSION_DIR` outside the repository).
+- **Gone when you're done.** `ensure.mjs --clear` deletes the active profile's session; uninstalling
+  a vendored copy deletes every saved session.
+
 ## What a "session" actually is here
 
 A sign-in leaves its evidence in up to four places, and they are **not** all captured the same way:
@@ -291,7 +327,7 @@ know this paragraph exists.
 
 **What it costs.** One extra file, `sessionStorage.json`, alongside `storageState.json`. For an
 Entra app that file holds the ID/access tokens, so it is exactly as sensitive as the state file:
-it's gitignored, `ensure.mjs --clear` deletes it, and the repo installer's `--uninstall` deletes it
+it's owner-only and gitignored, `ensure.mjs --clear` deletes it, and the repo installer's `--uninstall` deletes it
 too. Never commit it, print it, or copy it off your machine. Two practical limits: it covers a
 single origin (the one you land on at the end of sign-in), and it is replayed only into that
 origin, so a redirect to the identity provider never receives it. Existing keys are never

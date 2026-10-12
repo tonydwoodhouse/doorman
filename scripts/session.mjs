@@ -7,7 +7,8 @@
 // "invalid", and everything else (404, 5xx, timeouts) is "inconclusive" — never a reason to sign in
 // again, and never reported as a working session either.
 import { chromium } from './playwright.mjs';
-import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, rmSync, statSync } from 'fs';
+import { writePrivateFile } from './secure-files.mjs';
 import {
   EXIT, SESSION_STORAGE_PATH, STATE_PATH, command, config, joinBasePath, profile,
   undoMsysPathConversion,
@@ -95,10 +96,11 @@ export async function newSessionContext(browser) {
  * 'sessionStorage'`, which storageState() silently drops. Without this the saved "session"
  * replays a signed-out app and every check looks like an expired login.
  *
- * Always writes (or clears) the file, so a stale sidecar can never inject old tokens.
+ * Always writes (or clears) the file, so a stale sidecar can never inject old tokens. Returns
+ * { keys, restricted } — restricted is false if the file's permissions couldn't be narrowed.
  */
 export async function saveSessionStorage(page) {
-  if (!config.captureSessionStorage) return 0;
+  if (!config.captureSessionStorage) return { keys: 0, restricted: true };
   let entries = [];
   try {
     entries = await page.evaluate(() => Object.entries(window.sessionStorage));
@@ -107,11 +109,11 @@ export async function saveSessionStorage(page) {
   }
   if (entries.length === 0) {
     if (existsSync(SESSION_STORAGE_PATH)) rmSync(SESSION_STORAGE_PATH, { force: true });
-    return 0;
+    return { keys: 0, restricted: true };
   }
   const payload = { origin: new URL(page.url()).origin, entries };
-  writeFileSync(SESSION_STORAGE_PATH, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
-  return entries.length;
+  const restricted = writePrivateFile(SESSION_STORAGE_PATH, `${JSON.stringify(payload, null, 2)}\n`);
+  return { keys: entries.length, restricted };
 }
 
 /**

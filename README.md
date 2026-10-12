@@ -8,8 +8,9 @@ stops, and asks you to go and look yourself.
 
 Doorman removes that roadblock and then gets out of the way. The developer signs in **once**, in a
 real browser window; the authenticated session is saved and **replayed** on every later headless
-run, until it expires (~4–8h). No password or MFA prompt is ever automated, stored, or seen by the
-agent — the one interactive step stays human.
+run, until it expires (~4–8h). No password or MFA response is ever automated, stored, or seen by
+the agent — the one interactive step stays human. What *is* stored, the saved session, is a bearer
+credential while it lasts, and is handled like one (see [Session data](#session-data)).
 
 It is deliberately **not** a testing tool. It doesn't assert, drive flows, or decide what "correct"
 looks like. It gets you to the page; what you do once you're there is your business.
@@ -79,6 +80,21 @@ The `SessionStart` hook that installs Playwright is guarded by a hash of `script
 automatically. It runs detached, so it never delays a session. `DOORMAN_SKIP_INSTALL=1` disables it.
 Both hosts support plugin-bundled `SessionStart` hooks; if yours hasn't trusted/enabled it yet, the
 skills fall back to telling you to run `node install-deps.mjs --sync` by hand.
+
+### Session data
+
+Doorman never captures a password or an MFA response, but the session it saves — cookies and
+browser storage for the app, and usually for its identity provider too — works like a password
+until it expires. Anyone who can read the file can replay the sign-in. So:
+
+- Session files are written **owner-only** (`0600` in a `0700` directory on macOS/Linux; an ACL
+  naming only your account on Windows), atomically, via a temporary file and a rename.
+- Every capture starts from an **empty browser**, so nothing from your own browsing is ever in it.
+- The sign-in prints **which sites** it saved data for — host and count, never a value — and points
+  out anything that is neither the app nor its identity provider. `captureOrigins` can restrict the
+  saved session to a list of hosts.
+- Doorman **refuses to save a session** where Git could commit it: inside a repository, the files
+  must be ignored (the vendored copy ships that `.gitignore`), or it stops before the browser opens.
 
 ### One thing that cannot be automated
 
@@ -233,6 +249,9 @@ doorman/                          # the repository root IS the plugin, for both 
 │   ├── config.mjs                # config + CLI args (defaults < config file < env < flag)
 │   ├── playwright.mjs            # loads Playwright from wherever it is installed
 │   ├── session.mjs               # shared browser/verification logic + exit codes
+│   ├── verdict.mjs               # valid / invalid / inconclusive, from what a page load showed
+│   ├── origins.mjs               # which sites a saved session holds data for; captureOrigins
+│   ├── secure-files.mjs          # owner-only atomic writes; refuses Git-trackable session paths
 │   ├── verify.mjs                # the session check and its reporting
 │   ├── capture.mjs               # the interactive sign-in
 │   ├── ensure.mjs                # check, sign in if needed, re-verify — the one entry point
@@ -253,6 +272,8 @@ doorman/                          # the repository root IS the plugin, for both 
 │   ├── CLAUDE.section.md         # the agent instructions both installers write to CLAUDE.md
 │   ├── AGENTS.section.md         # same instructions, written to AGENTS.md
 │   └── get-past-login.SKILL.template.md   # optional per-project skill (Claude Code and Codex)
+├── test/                         # node:test suite — `npm test` (fixture app + end-to-end runs)
+└── package.json                  # repository dev tasks only; the runtime's manifest is scripts/package.json
 ```
 
 `scripts/` is the single source of truth for the runtime: both plugins execute it in place, and the

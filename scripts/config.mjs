@@ -11,8 +11,10 @@
 import { dirname, isAbsolute, join, relative } from 'path';
 import { existsSync, readFileSync } from 'fs';
 import { stripBase } from './verdict.mjs';
+import { allowEntryHost } from './origins.mjs';
+import { ensurePrivateDir } from './secure-files.mjs';
 import {
-  CONFIG_EXISTS, CONFIG_PATH, OUTPUT_DIR as OUT_DIR, PLUGIN_MODE, PROJECT_DIR, SESSION_DIR,
+  CONFIG_EXISTS, CONFIG_PATH, OUTPUT_DIR as OUT_DIR, PLUGIN_MODE, PROJECT_DIR, SCRIPT_DIR, SESSION_DIR,
   ensureDir, noteProjectPath,
 } from './paths.mjs';
 
@@ -103,6 +105,11 @@ const DEFAULTS = {
   // origin's IndexedDB, which for an app that caches data there can be large; the sign-in
   // tells you when the app has databases and this is switched off.
   captureIndexedDB: false,
+  // Which sites' cookies and storage the saved session keeps. "flow" keeps everything the sign-in
+  // set (the app and its identity provider; the browser starts empty, so nothing else is in it).
+  // An array of hosts ("app.example.com", "*.example.com" or a full origin) keeps only those, plus
+  // the app's own host. Stricter, but a re-sign-in can no longer ride the provider's session.
+  captureOrigins: 'flow',
   // Warn when the session's earliest cookie expiry is closer than this (ms).
   expiryWarningMs: 900000,
 };
@@ -247,6 +254,7 @@ function validateConfig(value) {
   validateBoolean(value.captureSessionStorage, 'captureSessionStorage');
   validateBoolean(value.captureIndexedDB, 'captureIndexedDB');
   validateBoolean(value.configured, 'configured');
+  validateCaptureOrigins(value.captureOrigins);
 
   if (!Array.isArray(value.unauthenticatedStatusCodes) ||
       value.unauthenticatedStatusCodes.some((status) => !Number.isInteger(status) || status < 100 || status > 599)) {
@@ -303,6 +311,25 @@ function validatePositiveNumber(value, name) {
   }
 }
 
+function validateCaptureOrigins(value) {
+  if (value === 'flow') return;
+  const message = `${configLabel}: captureOrigins must be "flow" or a non-empty array of hosts ` +
+    '(e.g. ["app.example.com", "*.example.com"]).';
+  if (!Array.isArray(value) || value.length === 0) fail(message);
+  for (const entry of value) {
+    if (typeof entry !== 'string' || entry.trim() === '') fail(message);
+    let host;
+    try {
+      host = allowEntryHost(entry);
+    } catch {
+      fail(message, `Not a valid origin: ${entry}`);
+    }
+    if (!/^(\*\.)?[a-z0-9.-]+$/i.test(host) && !/^\[[0-9a-f:]+\]$/i.test(host)) {
+      fail(message, `Not a host name: ${entry}`);
+    }
+  }
+}
+
 function validateBoolean(value, name) {
   if (typeof value !== 'boolean') {
     fail(`${configLabel}: ${name} must be true or false.`);
@@ -353,7 +380,9 @@ export const profile = profileName;
 // Created up front so a capture or a screenshot never fails on a missing directory. Vendored, these
 // already exist (they are the script directory); under the plugin they are made on first use.
 export const OUTPUT_DIR = ensureDir(OUT_DIR);
-export const SESSION_PATH_DIR = ensureDir(SESSION_DIR);
+// The session directory is owner-only — unless it is the vendored toolkit folder itself, which is
+// shared project content; there each session file is restricted individually instead.
+export const SESSION_PATH_DIR = SESSION_DIR === SCRIPT_DIR ? SESSION_DIR : ensurePrivateDir(SESSION_DIR);
 noteProjectPath();
 
 export const STATE_PATH = join(SESSION_DIR, `storageState${stateSuffix}.json`);
