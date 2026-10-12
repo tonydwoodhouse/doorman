@@ -8,19 +8,25 @@ stops, and asks you to go and look yourself.
 
 Doorman removes that roadblock and then gets out of the way. The developer signs in **once**, in a
 real browser window; the authenticated session is saved and **replayed** on every later headless
-run, until it expires (~4–8h). No password or MFA response is ever automated, stored, or seen by
-the agent — the one interactive step stays human. What *is* stored, the saved session, is a bearer
-credential while it lasts, and is handled like one (see [Session data](#session-data)).
+run, until it expires — whenever the app ends it, which can be minutes or weeks. No password or MFA
+response is ever automated, stored, or seen by the agent — the one interactive step stays human.
+What *is* stored, the saved session, is a bearer credential while it lasts, and is handled like one
+(see [Session data](#session-data)).
 
 It is deliberately **not** a testing tool. It doesn't assert, drive flows, or decide what "correct"
 looks like. It gets you to the page; what you do once you're there is your business.
 
-It works with forms login, OAuth/OIDC, SAML, enterprise SSO, Microsoft Entra ID, or anything else
-that leaves a session cookie or browser storage behind, and it is **stack-agnostic**: it only speaks
-HTTP and drives a browser, so the server can be ASP.NET, Django, Flask, Rails, Express, Next.js,
-Laravel or Spring without any difference. Node 20+ is needed to run the toolkit, not to build the
-app under test. See [Does this work with my app?](scripts/README.md#does-this-work-with-my-app) for
-the few auth styles that genuinely can't work.
+It is built for sign-ins that end with a session kept in the browser — forms login, OAuth/OIDC,
+SAML, enterprise SSO, Microsoft Entra ID — and the [test suite](#development) proves capture and
+replay for each place that session can live: cookies, `localStorage`, `sessionStorage` and IndexedDB,
+including a sign-in through a separate identity-provider origin. It is **stack-agnostic**: it only
+speaks HTTP and drives a browser, so the server can be ASP.NET, Django, Flask, Rails, Express,
+Next.js, Laravel or Spring without any difference. Node 20+ is needed to run the toolkit, not to
+build the app under test.
+
+Some apps refuse a replayed session even so — device-bound or IP-bound sessions, aggressive
+anti-automation — and a few auth styles leave nothing in the browser to replay at all. [Does this
+work with my app?](scripts/README.md#does-this-work-with-my-app) lists both, and what to do.
 
 Doorman is one runtime with two thin plugin adapters, for whichever agent you use — **Claude Code**
 and **Codex** are both first-class; there's also a vendored mode for CI and everyone else.
@@ -155,8 +161,8 @@ desktop to do it on — so it has to happen somewhere that does, then be carried
    your own script importing `session.mjs`. Never call `ensure.mjs` or `login-once.mjs` in CI; both
    try to open a browser window for a human who isn't there.
 
-There's no human in CI to redo this when the session expires (~4–8h, or whatever the app actually
-does), so budget for re-capturing and re-uploading the secret on a schedule, or accept that the job
+There's no human in CI to redo this when the session expires (whenever the app ends it — minutes for
+some apps, weeks for others), so budget for re-capturing and re-uploading the secret on a schedule, or accept that the job
 starts failing until someone does.
 
 The installer never copies per-developer artifacts (`node_modules/`, session files, `*.png`) and

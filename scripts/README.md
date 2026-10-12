@@ -8,7 +8,8 @@ cookie or browser storage behind.
 This toolkit gets you past that **without automating the login** (which is impractical to script
 and would mean handling passwords/MFA). Instead you sign in **once** in a real browser window,
 your authenticated session is saved to `storageState.json`, and every later headless run
-**replays** it — until it expires (~4–8h), when you sign in again.
+**replays** it — until the app ends that session (minutes for some apps, weeks for others), when
+you sign in again.
 
 > `storageState.json` (and `sessionStorage.json`, when your app uses it) contain a live session.
 > No password or MFA response is in them, but they are bearer credentials: anyone holding them is
@@ -54,7 +55,7 @@ The examples below use the short form.
 
 ## Does this work with my app?
 
-Almost certainly. The toolkit only ever talks to your app the way a browser does, so **nothing in
+Usually. The toolkit only ever talks to your app the way a browser does, so **nothing in
 it knows or cares what the server is written in** — ASP.NET, Django, Flask, FastAPI, Rails,
 Express, Next.js, Laravel, Spring, or a static SPA against an API all behave identically. Three
 requirements:
@@ -80,6 +81,21 @@ What genuinely doesn't work, because none of it leaves anything in browser stora
 
 Passkeys/WebAuthn are fine in the normal case: what gets replayed is the session cookie the passkey
 sign-in produces, not the passkey.
+
+What can still get in the way, even when the session *is* in browser storage:
+
+| Situation | What happens, and what to do |
+|---|---|
+| Popup sign-in (MSAL `loginPopup`, some OAuth buttons) | The main window never leaves the app, so the capture can't see the sign-in finish by URL. Set `authenticatedSelector`; the capture then waits for it. |
+| Unusual post-login landing | A sign-in that ends on a URL matching `loginPathPattern`, or that lingers on an interstitial, looks unfinished. Adjust `loginPathPattern`, or set `authenticatedUrlPattern` / `authenticatedSelector`. |
+| `sessionStorage` on several origins | Only the origin the sign-in ends on is saved (cookies, `localStorage` and IndexedDB are saved for every origin). |
+| Device-bound sessions (DBSC, token binding) | The session is tied to a key in the original browser profile; a replay in a fresh browser is rejected. Nothing to configure — these can't be replayed. |
+| IP-bound sessions | Fine on the machine that signed in; a session carried to CI from elsewhere is rejected. |
+| Anti-automation (bot detection, a CAPTCHA on every load) | Headless Chromium may be challenged where your own browser isn't. Use a test environment with it relaxed. |
+| Refresh tokens held only in memory | The saved session works until its access token expires, then can't refresh. Sign in again, or have the app persist the refresh token in test environments. |
+
+If a capture succeeds but the very next check is unauthenticated, it is one of these or a config
+problem — not something a second sign-in fixes.
 
 ## The one command
 

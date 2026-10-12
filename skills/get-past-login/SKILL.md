@@ -9,9 +9,10 @@ You hit a page that needs a signed-in user. This toolkit gets you through it by 
 session the developer established once, interactively — then you carry on with whatever you were
 doing. You never handle their credentials, and the toolkit does no testing of its own.
 
-The authentication can be forms login, OAuth/OIDC, SAML, enterprise SSO, Microsoft Entra ID, or
-anything else that leaves a session cookie or browser storage behind. `chromium-cli` is **not**
-assumed to be installed — don't try it first.
+The authentication can be forms login, OAuth/OIDC, SAML, enterprise SSO or Microsoft Entra ID —
+anything that ends with a session in browser storage. A few apps still refuse a replayed session
+(device-bound or IP-bound sessions, anti-automation); see the gotchas below. `chromium-cli` is
+**not** assumed to be installed — don't try it first.
 
 ## Where things are
 
@@ -189,7 +190,11 @@ Work through these in order; only the interactive sign-in needs the developer.
   capture noted that the app uses IndexedDB, set `"captureIndexedDB": true` (Firebase
   Authentication keeps tokens there) and run `ensure.mjs --clear`; otherwise check
   `authenticatedSelector` and the patterns against the URL it reported. Don't ask for a second
-  sign-in until the config is right.
+  sign-in until the config is right. If the config is right and a fresh session is still rejected,
+  the app may bind sessions to the original browser or IP, or block automation — tell the developer
+  that, rather than looping on sign-ins (see "Does this work with my app?" in the scripts README).
+- **A popup sign-in finishes without the URL changing.** If the app signs in through a popup, the
+  capture relies on `authenticatedSelector` to know it's done — make sure it is set.
 - **A session that just worked can expire mid-task.** Success lines report the session's age and
   earliest cookie expiry; if you see the "expiring soon" warning, expect exit 1 next and be ready
   to re-run `ensure.mjs` rather than reporting a UI bug.

@@ -11,7 +11,9 @@ directory**. Use its `appName`, `baseUrl`, `loginPath`, and `defaultCheckPath`; 
 skill or ask the developer for values that are already in the configuration.
 
 The configured authentication may be forms login, OAuth/OIDC, SAML, enterprise SSO, or another
-system that establishes a browser session. `chromium-cli` is **not** assumed to be installed —
+system that leaves a session in browser storage. A few apps still refuse a replayed session
+(device-bound or IP-bound sessions, anti-automation); if a fresh sign-in is rejected straight away,
+say so rather than asking for another. `chromium-cli` is **not** assumed to be installed —
 don't try it first. Go straight to the toolkit.
 
 Run every toolkit command **from the toolkit directory** (it has its own `package.json` /
