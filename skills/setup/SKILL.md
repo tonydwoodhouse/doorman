@@ -65,6 +65,13 @@ Read the repo for these. They are in the code, so don't ask the developer:
 Everything else has a built-in default; add a field only to change it. The full reference is in the
 plugin's `scripts/README.md`.
 
+**If the app has no sign-in at all** (no login route, no auth middleware, nothing gated), there is
+nothing for doorman to do yet. Keep the detected `baseUrl`, add `"configured": false` to the config
+so no script mistakes a public page for a valid session, skip step 3, and tell the developer that
+plainly — including that once authentication exists, asking to set doorman up again picks up from
+there.
+Don't write notes or any other file beyond the config.
+
 ## 3. Prove it works
 
 The app has to be running. Then, **in the background** (it waits for a human):
