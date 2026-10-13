@@ -11,7 +11,7 @@ tests (`npm test`; CI on Linux, Windows and macOS).
   `hooks/hooks.json`, one `scripts/` runtime. Both hosts copy only the plugin directory into their
   cache, so the old `integrations/` subfolders could not have worked once installed.
 - The Codex marketplace entry carries the `policy` Codex requires, and the README gives Codex's real
-  install steps (`codex plugin marketplace add`, then the Plugins directory). Codex runs plugin hooks
+  install steps (`codex plugin marketplace add`, then `codex plugin add doorman@doorman`). Codex runs plugin hooks
   only for manual desktop installs, so after a Codex marketplace install Playwright is installed with
   one `install-deps.mjs --sync` the skills prompt for.
 - The plugin data directory is recorded on first use (`~/.doorman/plugin-roots/`), because neither

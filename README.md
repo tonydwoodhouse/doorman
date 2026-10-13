@@ -40,11 +40,12 @@ for CI and everyone else.
 /plugin install doorman
 ```
 
-**Codex** — add the marketplace from a terminal, then install **doorman** from the Plugins directory
-(choose the `doorman` marketplace):
+**Codex** — from a terminal, then restart Codex:
 ```
 codex plugin marketplace add tonydwoodhouse/doorman
+codex plugin add doorman@doorman
 ```
+(From a local clone, pass its path to `marketplace add` instead.)
 
 Either way, that's the whole installation. Nothing is copied into your projects. In Claude Code,
 Playwright installs itself in the background on your next session start; in Codex, the first skill
