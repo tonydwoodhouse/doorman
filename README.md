@@ -40,7 +40,7 @@ for CI and everyone else.
 /plugin install doorman
 ```
 
-**Codex** — from a terminal, then restart Codex:
+**Codex** — run these in a terminal, then restart Codex:
 ```
 codex plugin marketplace add tonydwoodhouse/doorman
 codex plugin add doorman@doorman
