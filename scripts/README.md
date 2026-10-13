@@ -41,7 +41,8 @@ it is invoked.
 
 The plugin data directory needs one extra step. Both hosts tell hook commands where it is
 (Codex's `PLUGIN_DATA`, Claude Code's `CLAUDE_PLUGIN_DATA`) but neither tells the shell the agent
-runs commands in. So the first process to resolve it — normally the `SessionStart` hook — records
+runs commands in. So the first process to resolve it — normally the `SessionStart` hook, or with no
+hook (a Codex marketplace install) whichever script runs first, settling on `~/.doorman/plugin-data` — records
 its answer in `~/.doorman/plugin-roots/<hash>.json`, keyed by the installed scripts' own path, and
 every later run of that copy reads it back. `DOORMAN_DATA_DIR` overrides all of this, and
 `DOORMAN_HOME` moves `~/.doorman` itself. Every location can also be
@@ -192,10 +193,11 @@ malformed JSON, invalid regular expressions, or invalid values stop the script w
 
 You need [Node.js](https://nodejs.org/) 20+ installed.
 
-**As a plugin** there is nothing to do: a `SessionStart` hook (Claude Code and Codex both support
-it, and both run the plugin's one `hooks/hooks.json`) installs
-Playwright and Chromium into the host's plugin data directory the first time, in the background,
-and does nothing on every session after that. It is guarded by a hash of `package.json` +
+**As a plugin** under Claude Code there is nothing to do: the plugin's `SessionStart` hook
+(`hooks/hooks.json`) installs Playwright and Chromium into the host's plugin data directory the
+first time, in the background, and does nothing on every session after that. Codex reads the same
+hook file but runs plugin hooks only for plugins installed manually in the Codex desktop app, once
+trusted; after a Codex marketplace install, run `node install-deps.mjs --sync` once instead. It is guarded by a hash of `package.json` +
 `package-lock.json`, so bumping the pinned version is all it takes to have every machine update
 itself. `DOORMAN_SKIP_INSTALL=1` turns it off, and `node install-deps.mjs --sync` runs it in the
 foreground when you want to watch it (or if plugin-bundled hooks aren't enabled/trusted yet on your

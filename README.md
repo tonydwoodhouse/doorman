@@ -28,27 +28,28 @@ Some apps refuse a replayed session even so — device-bound or IP-bound session
 anti-automation — and a few auth styles leave nothing in the browser to replay at all. [Does this
 work with my app?](scripts/README.md#does-this-work-with-my-app) lists both, and what to do.
 
-Doorman is one runtime with two thin plugin adapters, for whichever agent you use — **Claude Code**
-and **Codex** are both first-class; there's also a vendored mode for CI and everyone else.
+This repository is a single plugin for whichever agent you use — **Claude Code** and **Codex** each
+read their own manifest, then share the same skills, hook and runtime. There's also a vendored mode
+for CI and everyone else.
 
 ## Install as a plugin (recommended)
 
-**Claude Code:**
+**Claude Code** — in a session:
 ```
 /plugin marketplace add tonydwoodhouse/doorman
 /plugin install doorman
 ```
 
-**Codex:**
+**Codex** — add the marketplace from a terminal, then install **doorman** from the Plugins directory
+(choose the `doorman` marketplace):
 ```
-/plugin marketplace add tonydwoodhouse/doorman
-/plugin install doorman
+codex plugin marketplace add tonydwoodhouse/doorman
 ```
 
-Either way, that's the whole installation. Nothing is copied into your projects, and Playwright
-installs itself in the background on your next session start (see
-[the execution boundary](#one-thing-that-cannot-be-automated) below for the one thing this can't do
-for you).
+Either way, that's the whole installation. Nothing is copied into your projects. In Claude Code,
+Playwright installs itself in the background on your next session start; in Codex, the first skill
+that needs it tells you to run one install command (see [below](#where-the-plugin-keeps-things)).
+Then there's only [the one thing that can't be automated](#one-thing-that-cannot-be-automated).
 
 Then, in any project:
 
@@ -86,8 +87,11 @@ The `SessionStart` hook that installs Playwright is guarded by a hash of `script
 automatically. It runs detached, so it never delays a session. `DOORMAN_SKIP_INSTALL=1` disables it.
 Concurrent sessions share one install through a lock; a lock left by an install that was killed is
 recognized (its process is gone, or it is hours old), cleared with a one-line note, and retried.
-Both hosts support plugin-bundled `SessionStart` hooks; if yours hasn't trusted/enabled it yet, the
-skills fall back to telling you to run `node install-deps.mjs --sync` by hand.
+Claude Code runs the hook for a marketplace install. Codex runs plugin hooks only for plugins
+installed manually in the Codex desktop app, and only once you've reviewed and trusted them — so
+under a Codex marketplace install, or any host that hasn't trusted the hook yet, the skills tell you
+to run `node install-deps.mjs --sync` once by hand instead. (With no hook to report the host's data
+directory, the plugin then keeps its data in `~/.doorman/plugin-data`.)
 
 ### Session data
 

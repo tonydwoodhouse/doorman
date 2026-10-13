@@ -167,8 +167,9 @@ against the URL the log reports.
 
 Work through these in order; only the interactive sign-in needs the developer.
 
-1. **Playwright missing** (exit 4 saying so) — the plugin installs it on session start. If the
-   message says it is still installing, wait and retry. Otherwise run
+1. **Playwright missing** (exit 4 saying so) — the plugin's session-start hook installs it where the
+   host runs that hook (Claude Code does; a Codex marketplace install doesn't). If the message says
+   it is still installing, wait and retry. Otherwise run
    `node "$DOORMAN/install-deps.mjs" --sync` and read the log path it prints.
 2. **Not configured** (exit 4 saying so) — §0, or the doorman `setup` skill.
 3. **Dev server down** (exit 4) — start it per the project's run instructions.

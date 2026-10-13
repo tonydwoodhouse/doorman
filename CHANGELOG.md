@@ -10,6 +10,10 @@ tests (`npm test`; CI on Linux, Windows and macOS).
 - **The repository root is the plugin**, for Claude Code and Codex alike: one set of skills, one
   `hooks/hooks.json`, one `scripts/` runtime. Both hosts copy only the plugin directory into their
   cache, so the old `integrations/` subfolders could not have worked once installed.
+- The Codex marketplace entry carries the `policy` Codex requires, and the README gives Codex's real
+  install steps (`codex plugin marketplace add`, then the Plugins directory). Codex runs plugin hooks
+  only for manual desktop installs, so after a Codex marketplace install Playwright is installed with
+  one `install-deps.mjs --sync` the skills prompt for.
 - The plugin data directory is recorded on first use (`~/.doorman/plugin-roots/`), because neither
   host exports it to the shell the agent runs commands in — without this the hook installed
   Playwright in one place and the scripts looked in another.

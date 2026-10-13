@@ -8,6 +8,10 @@
       "name": "doorman",
       "source": "./",
       "description": "Get past a sign-in wall: replay a browser session the developer signed in for once, so pages behind a login stop blocking browser automation.",
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
       "category": "Productivity"
     }
   ]

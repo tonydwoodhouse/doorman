@@ -39,7 +39,8 @@ async function load() {
     console.error('Playwright is not installed.');
     if (PLUGIN_MODE) {
       console.error(`Expected it at ${installed}`);
-      console.error('Start a new session to let the plugin install it, or run it now:');
+      // Codex only runs plugin hooks for manual desktop installs, so don't promise a new session will.
+      console.error('Install it now (takes a minute or two, once per machine):');
       console.error(`  node "${join(SCRIPT_DIR, 'install-deps.mjs')}" --sync`);
     } else {
       console.error('Run from the toolkit directory:  npm install && npx playwright install chromium');
