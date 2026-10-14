@@ -10,7 +10,7 @@ import { execFileSync } from 'child_process';
 import { chmodSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'fs';
 import { randomBytes } from 'crypto';
 import { userInfo } from 'os';
-import { basename, dirname, join } from 'path';
+import { basename, dirname, extname, join } from 'path';
 
 const WINDOWS = process.platform === 'win32';
 // Everyone, CREATOR OWNER, INTERACTIVE, Authenticated Users, SYSTEM, Administrators, Users.
@@ -61,7 +61,11 @@ export function ensurePrivateDir(dir) {
  * restricted; throws only if the write itself fails.
  */
 export function writePrivateFile(path, contents) {
-  const tmp = join(dirname(path), `.${basename(path)}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`);
+  // Same stem and extension as the real file, so the ignore rule that covers it (storageState*.json)
+  // covers the temporary file too, should a crash leave one behind.
+  const ext = extname(path);
+  const tmp = join(dirname(path),
+    `${basename(path, ext)}.tmp-${process.pid}-${randomBytes(4).toString('hex')}${ext}`);
   try {
     writeFileSync(tmp, contents, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
     // Restrict before the rename, so the file is never readable by others under its real name.

@@ -44,7 +44,7 @@ describe('session files from a sign-in through a separate identity provider', ()
   });
 
   test('the session file and directory are owner-only (even a pre-existing directory), with no temp files left', () => {
-    assert.deepEqual(readdirSync(dir).filter((f) => f.endsWith('.tmp')), []);
+    assert.deepEqual(readdirSync(dir).filter((f) => /\.tmp/.test(f)), []);
     const file = join(dir, 'storageState.json');
     if (process.platform === 'win32') {
       for (const target of [dir, file]) {
