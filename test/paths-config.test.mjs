@@ -181,7 +181,10 @@ describe('route arguments mangled by Git Bash', () => {
     }
   };
 
-  test('is recovered when the Git install it was prefixed with is identifiable', async () => {
+  // Only a drive-letter path is treated as converted, and only Windows temp paths have one.
+  test('is recovered when the Git install it was prefixed with is identifiable', {
+    skip: process.platform !== 'win32' && 'Git Bash only rewrites arguments on Windows',
+  }, async () => {
     const project = makeProject('http://127.0.0.1:9');
     const { dir: git, cleanup } = tempDir('fake-git-');
     try {

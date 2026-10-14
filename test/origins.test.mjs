@@ -4,6 +4,7 @@ import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'child_process';
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'fs';
+import { userInfo } from 'os';
 import { join } from 'path';
 import { allowEntryHost, describeRow, filterState, originWarnings, summarizeState } from '../scripts/origins.mjs';
 import { gitExposure, writePrivateFile } from '../scripts/secure-files.mjs';
@@ -81,6 +82,25 @@ describe('writePrivateFile', () => {
       } else {
         assert.equal(statSync(file).mode & 0o777, 0o600);
       }
+    } finally {
+      cleanup();
+    }
+  });
+
+  // A folder that passes no permissions down: new files get explicit entries from the process
+  // token (SYSTEM and Administrators for an administrator, as on CI) that /inheritance:r keeps.
+  test('restricts to the owner in a folder with no inheritable permissions', {
+    skip: process.platform !== 'win32' && 'Windows ACLs only',
+  }, () => {
+    const { dir, cleanup } = tempDir();
+    try {
+      const me = `${process.env.USERDOMAIN}\\${userInfo().username}`;
+      execFileSync('icacls', [dir, '/inheritance:r', '/grant:r', `${me}:F`, '*S-1-5-18:F', '*S-1-5-32-544:F', '/q']);
+      const file = join(dir, 'storageState.json');
+      assert.equal(writePrivateFile(file, '{}'), true);
+      const acl = execFileSync('icacls', [file], { encoding: 'utf8' });
+      assert.doesNotMatch(acl, /Everyone|BUILTIN|Authenticated Users|NT AUTHORITY/i, acl);
+      assert.match(acl, /:\(F\)/);
     } finally {
       cleanup();
     }

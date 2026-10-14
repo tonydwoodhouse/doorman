@@ -13,6 +13,8 @@ import { userInfo } from 'os';
 import { basename, dirname, join } from 'path';
 
 const WINDOWS = process.platform === 'win32';
+// Everyone, CREATOR OWNER, INTERACTIVE, Authenticated Users, SYSTEM, Administrators, Users.
+const BROAD_SIDS = ['*S-1-1-0', '*S-1-3-0', '*S-1-5-4', '*S-1-5-11', '*S-1-5-18', '*S-1-5-32-544', '*S-1-5-32-545'];
 
 function windowsAccount() {
   const name = userInfo().username;
@@ -27,8 +29,11 @@ export function restrictToOwner(path, { directory = false } = {}) {
   try {
     if (WINDOWS) {
       // Drop inherited entries and grant only this account; (OI)(CI) makes new files inherit it.
+      // A file created in a folder that passes nothing down gets explicit entries from the process
+      // token instead (SYSTEM and Administrators, for an administrator), which /inheritance:r
+      // leaves alone — so remove the broad built-in groups too, by SID, which can never be ours.
       const grant = `${windowsAccount()}:${directory ? '(OI)(CI)F' : 'F'}`;
-      execFileSync('icacls', [path, '/inheritance:r', '/grant:r', grant, '/q'],
+      execFileSync('icacls', [path, '/inheritance:r', '/grant:r', grant, '/remove', ...BROAD_SIDS, '/q'],
         { stdio: 'ignore', windowsHide: true });
     } else {
       chmodSync(path, directory ? 0o700 : 0o600);
