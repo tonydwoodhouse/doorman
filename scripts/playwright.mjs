@@ -12,6 +12,7 @@ import { existsSync } from 'fs';
 import { join } from 'path';
 import { pathToFileURL } from 'url';
 import { DEPS_DIR, PLUGIN_MODE, SCRIPT_DIR } from './paths.mjs';
+import { installInProgress } from './install-lock.mjs';
 
 const installed = join(DEPS_DIR, 'node_modules', 'playwright');
 
@@ -28,8 +29,9 @@ async function load() {
         // Fall through to the shared message: a half-installed copy is an install problem too.
       }
     }
-    if (PLUGIN_MODE && existsSync(join(DEPS_DIR, '.installing'))) {
-      // The SessionStart hook is mid-download. Saying so turns a puzzling failure into a wait.
+    if (PLUGIN_MODE && installInProgress(DEPS_DIR)) {
+      // The SessionStart hook is mid-download. Saying so turns a puzzling failure into a wait —
+      // but only while that is true: a lock left by a killed install must not promise one forever.
       console.error('Playwright is still being installed for the doorman plugin.');
       console.error(`Give it a minute and try again — progress is in ${join(DEPS_DIR, 'install.log')}`);
       process.exit(4);
@@ -37,7 +39,8 @@ async function load() {
     console.error('Playwright is not installed.');
     if (PLUGIN_MODE) {
       console.error(`Expected it at ${installed}`);
-      console.error('Start a new session to let the plugin install it, or run it now:');
+      // Codex only runs plugin hooks for manual desktop installs, so don't promise a new session will.
+      console.error('Install it now (takes a minute or two, once per machine):');
       console.error(`  node "${join(SCRIPT_DIR, 'install-deps.mjs')}" --sync`);
     } else {
       console.error('Run from the toolkit directory:  npm install && npx playwright install chromium');

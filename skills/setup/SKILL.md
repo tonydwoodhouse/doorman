@@ -1,8 +1,6 @@
 ---
 name: "setup"
 description: "Configure doorman for this project: detect the dev server URL, work out the login and gated routes, and prove a session can be captured. Use once per project, or whenever a doorman script exits 4 saying it is not configured."
-user-invocable: true
-disable-model-invocation: false
 ---
 
 # Setting doorman up for this project
@@ -11,11 +9,15 @@ One config file, five fields, most of them derivable from the repo. Aim to finis
 the developer anything except to sign in at the end.
 
 ```bash
-DOORMAN="$CLAUDE_PLUGIN_ROOT/../../scripts"    # if empty, it is ../../../../scripts beside this file
+DOORMAN="${CLAUDE_PLUGIN_ROOT}/scripts"
 node "$DOORMAN/paths.mjs"                  # where the config will go, and whether one exists
 ```
 
-The config lands at `<project>/.claude/doorman/doorman.config.json`. It holds URLs and selectors,
+Claude Code fills in that path when it loads this skill. If the first line still reads literally
+`${CLAUDE_PLUGIN_ROOT}` (as under Codex), use the absolute path of the `scripts` directory two
+levels above this SKILL.md instead.
+
+The config lands at `<project>/.doorman/doorman.config.json`. It holds URLs and selectors,
 never secrets, so it is meant to be committed — the saved session lives outside the project
 entirely and is never at risk of being committed with it.
 
@@ -52,13 +54,23 @@ Read the repo for these. They are in the code, so don't ask the developer:
 - **`authenticatedSelector`** — a selector for something only a signed-in user sees: a sign-out
   link, a profile menu, a user avatar. **Worth the effort.** Without it, every check relies on "we
   weren't redirected to the login page", which quietly passes on apps that render a signed-out
-  version of the same URL.
+  version of the same URL. If there's no stable selector, `authenticatedText` (e.g. `"Sign out"`)
+  does the same job.
+- **`unauthenticatedSelector`** — only for SPAs that answer 200 on every route and render a sign-in
+  component client-side: a selector for that component (e.g. the login form).
 - **`idpHostPattern`** — only for an external identity provider with a stable host (Entra ID,
   Auth0, Okta). It lets a redirect to the provider be recognised as "not signed in" rather than
   a mysterious off-origin failure.
 
 Everything else has a built-in default; add a field only to change it. The full reference is in the
 plugin's `scripts/README.md`.
+
+**If the app has no sign-in at all** (no login route, no auth middleware, nothing gated), there is
+nothing for doorman to do yet. Keep the detected `baseUrl`, add `"configured": false` to the config
+so no script mistakes a public page for a valid session, skip step 3, and tell the developer that
+plainly — including that once authentication exists, asking to set doorman up again picks up from
+there.
+Don't write notes or any other file beyond the config.
 
 ## 3. Prove it works
 
@@ -90,7 +102,7 @@ Show them the finished config, where the session file lives, and which fields yo
 found stated. If you had to guess `authenticatedSelector`, say so — it's the one field a human can
 correct in seconds and the one that most improves reliability.
 
-Suggest committing `.claude/doorman/doorman.config.json` so the rest of the team gets it for free.
+Suggest committing `.doorman/doorman.config.json` so the rest of the team gets it for free.
 
 ## Rules
 

@@ -3,23 +3,26 @@
 // Every script that drives a browser goes through here, so auth-check.mjs, shot.mjs and
 // ensure.mjs classify failures identically — an agent that can trust one can trust the rest.
 //
-// The central rule encoded below: only a *conclusive* signal (login redirect, identity
-// provider, off-origin, 401/403) means "not authenticated". A 404 or 500 is a route
-// problem, and re-authenticating will never fix it.
+// The rules for what a page load proves live in verdict.mjs: explicit evidence decides "valid" or
+// "invalid", and everything else (404, 5xx, timeouts) is "inconclusive" — never a reason to sign in
+// again, and never reported as a working session either.
 import { chromium } from './playwright.mjs';
-import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, rmSync, statSync } from 'fs';
+import { writePrivateFile } from './secure-files.mjs';
 import {
-  EXIT, SESSION_STORAGE_PATH, STATE_PATH, command, config, joinBasePath, profile, stripBasePath,
+  EXIT, SESSION_STORAGE_PATH, STATE_PATH, command, config, joinBasePath, profile,
+  undoMsysPathConversion,
 } from './config.mjs';
+import { VERDICT, classify } from './verdict.mjs';
 
 // Re-exported so a custom script only needs one import for the common case.
-export { EXIT, STATE_PATH, profile };
+export { EXIT, STATE_PATH, VERDICT, profile };
 
 const ABSOLUTE_URL = /^[a-z][a-z0-9+.-]*:\/\//i;
 
 /** Resolve a path (or absolute URL) beneath baseUrl, refusing to leave the app origin. */
 export function resolveTarget(pathOrUrl) {
-  const raw = String(pathOrUrl);
+  const raw = undoMsysPathConversion(String(pathOrUrl));
   let url;
   try {
     url = ABSOLUTE_URL.test(raw)
@@ -77,6 +80,7 @@ export async function newSessionContext(browser) {
     ignoreHTTPSErrors: true,
     viewport: config.viewport,
   });
+  context.setDefaultNavigationTimeout(config.navigationTimeoutMs);
   await replaySessionStorage(context);
   return context;
 }
@@ -92,10 +96,11 @@ export async function newSessionContext(browser) {
  * 'sessionStorage'`, which storageState() silently drops. Without this the saved "session"
  * replays a signed-out app and every check looks like an expired login.
  *
- * Always writes (or clears) the file, so a stale sidecar can never inject old tokens.
+ * Always writes (or clears) the file, so a stale sidecar can never inject old tokens. Returns
+ * { origin, keys, restricted } — restricted is false if the file's permissions couldn't be narrowed.
  */
 export async function saveSessionStorage(page) {
-  if (!config.captureSessionStorage) return 0;
+  if (!config.captureSessionStorage) return { keys: 0, restricted: true };
   let entries = [];
   try {
     entries = await page.evaluate(() => Object.entries(window.sessionStorage));
@@ -104,11 +109,11 @@ export async function saveSessionStorage(page) {
   }
   if (entries.length === 0) {
     if (existsSync(SESSION_STORAGE_PATH)) rmSync(SESSION_STORAGE_PATH, { force: true });
-    return 0;
+    return { keys: 0, restricted: true };
   }
   const payload = { origin: new URL(page.url()).origin, entries };
-  writeFileSync(SESSION_STORAGE_PATH, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
-  return entries.length;
+  const restricted = writePrivateFile(SESSION_STORAGE_PATH, `${JSON.stringify(payload, null, 2)}\n`);
+  return { origin: payload.origin, keys: entries.length, restricted };
 }
 
 /**
@@ -239,68 +244,63 @@ export function describeSession() {
  * Deliberately NOT waitUntil:'networkidle' — an app holding a connection open (SignalR,
  * Blazor Server, websockets, long-polling, EventSource) never reaches network idle, so a
  * perfectly good session would time out and look like an auth failure.
+ *
+ * Nothing answering at all is an environment problem and exits 4 here. Any other failure — a
+ * timeout, a redirect loop, an aborted load — is returned as `{ response: null, navigationError }`
+ * so the caller can report it as inconclusive rather than crash or guess.
  */
 export async function goto(page, url, { settle = true } = {}) {
   try {
     const response = await page.goto(url, { waitUntil: 'domcontentloaded' });
     if (settle) await page.waitForTimeout(config.settleTimeoutMs);
-    return response;
+    return { response, navigationError: null };
   } catch (e) {
-    if (/ERR_CONNECTION_REFUSED|ERR_CONNECTION_RESET|ERR_NAME_NOT_RESOLVED|ERR_EMPTY_RESPONSE|ERR_SSL/i.test(e.message)) {
+    if (/ERR_CONNECTION_REFUSED|ERR_CONNECTION_RESET|ERR_NAME_NOT_RESOLVED|ERR_EMPTY_RESPONSE|ERR_SSL|ERR_ADDRESS_UNREACHABLE/i.test(e.message)) {
       console.error(`Nothing answered at ${url}`);
       console.error(`Start ${config.appName} so it listens on ${config.baseUrl}, then try again.`);
       process.exit(EXIT.ENVIRONMENT);
     }
-    if (e.name === 'TimeoutError') {
-      console.error(`Timed out loading ${url} — the app is reachable but did not respond in time.`);
-      console.error('This is not an authentication problem; check the app is healthy.');
-      process.exit(EXIT.ENVIRONMENT);
-    }
+    if (e.name === 'TimeoutError') return { response: null, navigationError: 'timeout' };
+    const code = e.message.match(/net::ERR_[A-Z_]+/)?.[0];
+    if (code) return { response: null, navigationError: code };
     throw e;
   }
 }
 
+async function visible(locator) {
+  try {
+    // .first() keeps a selector that matches several elements from tripping strict mode.
+    return await locator.first().isVisible();
+  } catch {
+    return false; // an invalid selector or a page that went away: not visible
+  }
+}
+
 /**
- * Decide whether the page we landed on proves the session works.
- * Returns { verdict: 'ok' | 'unauthenticated' | 'bad-route', status, finalUrl, reasons }.
+ * Decide what the page we landed on proves about the session.
+ * `loaded` is what goto() returned. Returns
+ * { verdict: 'valid' | 'invalid' | 'inconclusive', evidence, status, finalUrl, reasons }.
  */
-export async function assessSession(page, response) {
-  const finalUrl = new URL(page.url());
-  const status = response?.status() ?? 0;
-  // Config regexes are written app-relative, so compare against the path minus any base path.
-  const appPath = stripBasePath(finalUrl.pathname);
-  const pathAndQuery = `${appPath}${finalUrl.search}`;
-
-  // Conclusive evidence the session is not usable.
-  const fatal = [
-    new RegExp(config.loginPathPattern, 'i').test(appPath) &&
-      'redirected to the configured login page',
-    config.idpHostPattern !== null && new RegExp(config.idpHostPattern, 'i').test(finalUrl.host) &&
-      'redirected to the configured identity-provider host',
-    finalUrl.origin !== config.origin &&
-      `landed outside the app origin (${finalUrl.origin})`,
-    config.unauthenticatedStatusCodes.includes(status) &&
-      `returned HTTP ${status}`,
-  ].filter(Boolean);
-
-  if (fatal.length) return { verdict: 'unauthenticated', status, finalUrl, reasons: fatal };
-
-  // Check the status BEFORE the optional markers. An error page won't carry
-  // authenticatedSelector either, and blaming that on authentication is what sends a
-  // developer off to re-sign-in over a URL typo.
-  if (status !== 200) return { verdict: 'bad-route', status, finalUrl, reasons: [] };
-
-  const markers = [];
-  if (config.authenticatedUrlPattern !== null &&
-      !new RegExp(config.authenticatedUrlPattern, 'i').test(pathAndQuery)) {
-    markers.push(`did not match authenticatedUrlPattern (was ${pathAndQuery})`);
+export async function assessSession(page, loaded) {
+  const { response = null, navigationError = null } = loaded ?? {};
+  let finalUrl;
+  try {
+    finalUrl = new URL(page.url());
+  } catch {
+    finalUrl = new URL(config.baseUrl);
   }
-  if (config.authenticatedSelector !== null &&
-      // .first() keeps a selector that matches several elements from tripping strict mode.
-      !(await page.locator(config.authenticatedSelector).first().isVisible())) {
-    markers.push(`did not show authenticatedSelector (${config.authenticatedSelector})`);
-  }
-
-  if (markers.length) return { verdict: 'unauthenticated', status, finalUrl, reasons: markers };
-  return { verdict: 'ok', status, finalUrl, reasons: [] };
+  const status = response?.status() ?? null;
+  const check = async (setting, probe) => (setting == null || navigationError ? null : probe());
+  const facts = {
+    status,
+    finalUrl,
+    navigationError,
+    authenticatedSelectorVisible: await check(config.authenticatedSelector,
+      () => visible(page.locator(config.authenticatedSelector))),
+    authenticatedTextVisible: await check(config.authenticatedText,
+      () => visible(page.getByText(config.authenticatedText))),
+    unauthenticatedSelectorVisible: await check(config.unauthenticatedSelector,
+      () => visible(page.locator(config.unauthenticatedSelector))),
+  };
+  return { ...classify(facts, config), status, finalUrl };
 }

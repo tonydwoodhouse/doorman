@@ -3,10 +3,13 @@
   "owner": {
     "name": "tonydwoodhouse"
   },
+  "metadata": {
+    "description": "doorman: get browser automation past a sign-in wall by replaying a session the developer signed in for once."
+  },
   "plugins": [
     {
       "name": "doorman",
-      "source": "./integrations/claude",
+      "source": "./",
       "description": "Get past a sign-in wall: replay a browser session the developer signed in for once, so pages behind a login stop blocking browser automation."
     }
   ]

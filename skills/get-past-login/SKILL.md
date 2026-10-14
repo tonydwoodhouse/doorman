@@ -1,8 +1,6 @@
 ---
 name: "get-past-login"
 description: "Get past a sign-in wall that is blocking you. Use whenever a page redirects to a login, returns 401 or 403, renders as signed-out, or a saved session has expired — get a working session, then carry on with whatever you were already doing. Also use for any browser check, screenshot or CSS/layout inspection of a page that needs a signed-in user."
-user-invocable: true
-disable-model-invocation: false
 ---
 
 # Getting past a sign-in wall
@@ -11,27 +9,29 @@ You hit a page that needs a signed-in user. This toolkit gets you through it by 
 session the developer established once, interactively — then you carry on with whatever you were
 doing. You never handle their credentials, and the toolkit does no testing of its own.
 
-The authentication can be forms login, OAuth/OIDC, SAML, enterprise SSO, Microsoft Entra ID, or
-anything else that leaves a session cookie or browser storage behind. `chromium-cli` is **not**
-assumed to be installed — don't try it first.
+The authentication can be forms login, OAuth/OIDC, SAML, enterprise SSO or Microsoft Entra ID —
+anything that ends with a session in browser storage. A few apps still refuse a replayed session
+(device-bound or IP-bound sessions, anti-automation); see the gotchas below. `chromium-cli` is
+**not** assumed to be installed — don't try it first.
 
 ## Where things are
 
-The scripts live in the doorman repo the plugin was installed from, not in the project. Set this
-once per session and use it in every command below:
+The scripts live in the installed plugin, not in the project. Set this once per session and use it
+in every command below:
 
 ```bash
-DOORMAN="$CLAUDE_PLUGIN_ROOT/../../scripts"
+DOORMAN="${CLAUDE_PLUGIN_ROOT}/scripts"
 ```
 
-If `$CLAUDE_PLUGIN_ROOT` is empty in your shell, derive it from the path of this very file: it is
-`<repo>/integrations/claude/skills/get-past-login/SKILL.md`, so the scripts are `../../../../scripts`
-beside it. Use an absolute path, and confirm it with `node "$DOORMAN/paths.mjs"`, which prints every
-location it resolved:
+Claude Code fills in that path when it loads this skill. If what you see above is still the literal
+text `${CLAUDE_PLUGIN_ROOT}` (Codex doesn't substitute it, and the variable is not set in your
+shell), use the `scripts` directory two levels above this SKILL.md instead — this file is
+`<plugin>/skills/get-past-login/SKILL.md`. Either way use an absolute path, and confirm it with
+`node "$DOORMAN/paths.mjs"`, which prints every location it resolved:
 
 | | |
 |---|---|
-| config | `<project>/.claude/doorman/doorman.config.json` — per project, committed, no secrets |
+| config | `<project>/.doorman/doorman.config.json` — per project, committed, no secrets |
 | session | the plugin's data directory, **outside the project** — a live session, never committed |
 | screenshots | the plugin's data directory; `shot.mjs` prints the absolute path of each one |
 
@@ -46,17 +46,22 @@ the project you are testing. Read `doorman.config.json` before you start — `ap
 | 0 | Session works | Continue. |
 | 1 | Session expired or invalid | Get a new session (§3). |
 | 2 | No session captured yet | Get one (§3). |
-| 3 | Session fine, route returned non-200 | Wrong URL or app bug. **Do not re-authenticate.** |
-| 4 | Environment problem (not configured, server down, Chromium missing, bad argument) | Read the message. Not auth. |
+| 3 | Inconclusive: the route proved nothing (404, 5xx, timeout) | Wrong URL or unhealthy app. **Do not re-authenticate.** |
+| 4 | Environment problem (not configured, server down, Chromium missing, bad argument, crash) | Read the message. Not auth. |
 | 5 | The interactive sign-in was never completed | Window closed or timed out; ask the developer. |
 
 3 or 4 means re-running the sign-in is pointless. Asking the developer to sign in again over a
 route typo wastes their time and teaches them to distrust the tool.
 
+A success line that adds "Evidence: the page loaded without a login redirect" means no positive
+signal is configured, so the check only knows it wasn't bounced to a login page. Setting
+`authenticatedSelector` (or `authenticatedText`) in the config turns that into real proof.
+
 ## 0. Is this project configured yet?
 
 If `doorman.config.json` doesn't exist, or a script exits 4 saying it isn't configured, run the
-`doorman:setup` skill — it does the whole job. In short:
+doorman `setup` skill (`/doorman:setup` in Claude Code, `$setup` in Codex) — it does the whole job.
+In short:
 
 ```bash
 node "$DOORMAN/detect.mjs"            # ranked candidates + the file and field each came from
@@ -114,8 +119,8 @@ import { assessSession, goto, launchBrowser, newSessionContext, requireSession }
 requireSession();
 const browser = await launchBrowser();
 const page = await (await newSessionContext(browser)).newPage();
-const response = await goto(page, new URL(config.defaultCheckPath, config.baseUrl).href);
-console.log(await assessSession(page, response));   // { verdict, status, finalUrl, reasons }
+const loaded = await goto(page, new URL(config.defaultCheckPath, config.baseUrl).href);
+console.log(await assessSession(page, loaded));   // { verdict: 'valid'|'invalid'|'inconclusive', ... }
 await browser.close();
 ```
 
@@ -162,28 +167,35 @@ against the URL the log reports.
 
 Work through these in order; only the interactive sign-in needs the developer.
 
-1. **Playwright missing** (exit 4 saying so) — the plugin installs it on session start. If the
-   message says it is still installing, wait and retry. Otherwise run
-   `node "$CLAUDE_PLUGIN_ROOT/../../scripts/install-deps.mjs" --sync` and read the log path it prints.
-2. **Not configured** (exit 4 saying so) — §0, or the `doorman:setup` skill.
+1. **Playwright missing** (exit 4 saying so) — the plugin's session-start hook installs it where the
+   host runs that hook (Claude Code does; a Codex marketplace install doesn't). If the message says
+   it is still installing, wait and retry. Otherwise run
+   `node "$DOORMAN/install-deps.mjs" --sync` and read the log path it prints.
+2. **Not configured** (exit 4 saying so) — §0, or the doorman `setup` skill.
 3. **Dev server down** (exit 4) — start it per the project's run instructions.
 4. **No session / expired** (exit 2 or 1) — §3.
 
 ## Gotchas proven in use
 
 - **Get the route right before blaming auth.** A gated page's URL is its framework route (see
-  `defaultCheckPath`), *not* the source-folder path. Exit 3 is telling you exactly this.
-- **Git Bash on Windows mangles leading-slash arguments** into Windows paths. Just drop the leading
-  slash — `node "$DOORMAN/shot.mjs" dashboard` — the scripts add it back. Don't reach for
-  `MSYS_NO_PATHCONV=1` here: it disables path conversion for the whole command, including
-  `$DOORMAN` and `$CLAUDE_PLUGIN_DATA`, which breaks the run in a much more confusing way.
+  `defaultCheckPath`), *not* the source-folder path. Exit 3 (a 404 or 500) is usually telling you
+  exactly this.
+- **Git Bash on Windows rewrites leading-slash arguments** into Windows paths (`/dashboard` arrives
+  as `C:/Program Files/Git/dashboard`). The scripts detect and undo that, so `/dashboard` is fine;
+  if one ever exits 4 with "Not an app route", drop the leading slash — `dashboard` — and the
+  scripts add it back. Don't reach for `MSYS_NO_PATHCONV=1`: it disables path conversion for the
+  whole command, including `$DOORMAN` itself, which breaks the run in a much more confusing way.
 - **Let JS-rendered content settle.** Grids and tables fill late; use `--wait="<selector>"` rather
   than screenshotting a blank page and guessing.
 - **A sign-in that succeeds but still checks as unauthenticated is a config problem.** If the
   capture noted that the app uses IndexedDB, set `"captureIndexedDB": true` (Firebase
   Authentication keeps tokens there) and run `ensure.mjs --clear`; otherwise check
   `authenticatedSelector` and the patterns against the URL it reported. Don't ask for a second
-  sign-in until the config is right.
+  sign-in until the config is right. If the config is right and a fresh session is still rejected,
+  the app may bind sessions to the original browser or IP, or block automation — tell the developer
+  that, rather than looping on sign-ins (see "Does this work with my app?" in the scripts README).
+- **A popup sign-in finishes without the URL changing.** If the app signs in through a popup, the
+  capture relies on `authenticatedSelector` to know it's done — make sure it is set.
 - **A session that just worked can expire mid-task.** Success lines report the session's age and
   earliest cookie expiry; if you see the "expiring soon" warning, expect exit 1 next and be ready
   to re-run `ensure.mjs` rather than reporting a UI bug.
