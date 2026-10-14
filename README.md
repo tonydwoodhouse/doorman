@@ -184,7 +184,9 @@ from the project's plugin config, `.doorman/doorman.config.json`, if there is on
 Node builtins, so it happens before any `npm install`, and it never fails the install. On every later
 run the installer checks the existing file with `node check-config.mjs` and reports problems —
 including settings it doesn't recognize — without changing it. `doorman.config.example.json` beside
-it is refreshed on each install, as a reference for new settings. `--reset-config` is the only way
+it is refreshed on each install as the starting shape (the five per-project fields); every setting,
+including new ones, is described under "Field reference" in the `README.md` beside the scripts.
+`--reset-config` is the only way
 to have the installer replace it, and it keeps the old one as a `.bak`.
 
 Every vendored install also writes a clearly marked `doorman` section into the workspace's

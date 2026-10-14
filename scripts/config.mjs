@@ -204,8 +204,8 @@ export const unknownConfigKeys = Object.keys(fileConfig)
   .filter((key) => !(key in DEFAULTS) && !/^[$_]/.test(key));
 if (unknownConfigKeys.length) {
   console.error(`doorman: ${configLabel} has setting(s) doorman doesn't recognize, which are ignored: ` +
-    `${unknownConfigKeys.join(', ')}. A typo? The settings are listed in doorman.config.example.json ` +
-    'and the README.');
+    `${unknownConfigKeys.join(', ')}. A typo? Every setting is listed under "Field reference" in the ` +
+    'README.md beside these scripts.');
 }
 
 // Env override for one-off runs / CI without editing the file.
