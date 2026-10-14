@@ -34,18 +34,23 @@ for CI and everyone else.
 
 ## Install as a plugin (recommended)
 
-**Claude Code** — in a session:
+**Claude Code** — run these in a terminal, then start a new session (or reload the VS Code window):
 ```
-/plugin marketplace add tonydwoodhouse/doorman
-/plugin install doorman
+claude plugin marketplace add tonydwoodhouse/doorman
+claude plugin install doorman@doorman
 ```
+In the terminal version of Claude Code you can use `/plugin marketplace add tonydwoodhouse/doorman`
+and `/plugin install doorman` in a session instead; the VS Code extension doesn't offer `/plugin`.
 
 **Codex** — run these in a terminal, then restart Codex:
 ```
 codex plugin marketplace add tonydwoodhouse/doorman
 codex plugin add doorman@doorman
 ```
-(From a local clone, pass its path to `marketplace add` instead.)
+
+To install from a local clone instead, pass its path to `marketplace add`. Claude Code then runs the
+plugin straight from that clone, so whatever branch it has checked out is what you get; Codex takes
+a copy at install time.
 
 Either way, that's the whole installation. Nothing is copied into your projects. In Claude Code,
 Playwright installs itself in the background on your next session start; in Codex, the first skill
