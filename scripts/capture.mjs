@@ -68,7 +68,7 @@ export async function captureSession() {
   // Every check makes sure the session directory exists, but on Windows only restricts one it
   // creates (icacls is a process per call). A directory left by an older version is narrowed here,
   // when a secret is about to be written into it.
-  if (SESSION_DIR_IS_PRIVATE) restrictToOwner(SESSION_PATH_DIR, { directory: true });
+  const dirRestricted = !SESSION_DIR_IS_PRIVATE || restrictToOwner(SESSION_PATH_DIR, { directory: true });
 
   const timeoutText = humanTimeout(loginTimeoutMs);
   const loginUrl = resolveTarget(loginPath).href;
@@ -123,7 +123,7 @@ export async function captureSession() {
 
     const captured = await context.storageState({ indexedDB: config.captureIndexedDB });
     const { state, dropped } = filterState(captured, config.captureOrigins, new URL(config.baseUrl).hostname);
-    let restricted = writePrivateFile(STATE_PATH, `${JSON.stringify(state, null, 2)}\n`);
+    let restricted = writePrivateFile(STATE_PATH, `${JSON.stringify(state, null, 2)}\n`) && dirRestricted;
     // Cookies and localStorage come from storageState(); sessionStorage does not, and MSAL
     // (Entra ID) keeps its tokens there by default.
     const sidecar = await saveSessionStorage(page);
@@ -140,8 +140,8 @@ export async function captureSession() {
       console.log(`   Plus ${sessionKeys} sessionStorage key(s) -> ${SESSION_STORAGE_PATH}`);
     }
     if (!restricted) {
-      console.log('   ⚠️  Could not restrict the session files to your user account; other accounts on');
-      console.log('   this machine may be able to read them. Check the folder\'s permissions.');
+      console.log('   ⚠️  Could not restrict the session files or their folder to your user account;');
+      console.log('   other accounts on this machine may be able to read them. Check the folder\'s permissions.');
     }
     if (config.captureIndexedDB) console.log('   IndexedDB included in the snapshot.');
     else if (indexedDbNames.length > 0) {
