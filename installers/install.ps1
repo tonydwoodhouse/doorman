@@ -333,10 +333,21 @@ function Install-ManagedFile([string]$src, [string]$rel) {
   }
   $current = Get-ContentHash $target
   $entry = Find-Entry $rel
-  if ($current -eq $newHash) {
-    # Already exactly this version, so it is ours either way.
-    if ($entry) { Set-Entry $rel $newHash $entry.action $entry.backup } else { Set-Entry $rel $newHash 'adopted' '' }
+  if ($current -eq $newHash -and $entry) {
+    # Ours, and already exactly this version.
+    Set-Entry $rel $newHash $entry.action $entry.backup
     $script:unchanged++
+    return
+  }
+  if ($current -eq $newHash) {
+    # The same content, but not recorded as ours (a copy from before 0.2.0, or someone's own).
+    # Claiming it would let an uninstall delete it, so that takes -Force like any other file.
+    if (-not $Force) {
+      Write-Host "  skip (identical, but not installed by doorman — -Force adopts it): $rel" -ForegroundColor DarkYellow
+      return
+    }
+    Set-Entry $rel $newHash 'adopted' ''
+    Write-Host "  adopted: $rel" -ForegroundColor Green
     return
   }
   if ($entry -and $current -eq $entry.sha256) {

@@ -354,8 +354,9 @@ says so: re-run the installer with `--force` to adopt that copy first.
 
 The same receipt makes re-running the installer safe: files it installed and nobody has changed
 are updated in place; a file someone changed, or one it didn't put there (your own
-`.claude/skills/get-past-login/SKILL.md`, say), is skipped unless `--force` — which keeps a `.bak`
-of anything it overwrites that the installer didn't write.
+`.claude/skills/get-past-login/SKILL.md`, say, or a 0.1.0 copy identical to this version), is
+skipped unless `--force` — which keeps a `.bak` of anything it overwrites that the installer didn't
+write.
 
 ## Notes
 

@@ -48,8 +48,10 @@ tests (`npm test`; CI on Linux, Windows and macOS).
   keeps a `.bak`.
 - **Ownership-aware install and uninstall.** Every installed file is recorded with its hash in
   `.doorman/install-manifest.json`. Re-runs update only files nobody changed; `--force` keeps a
-  `.bak` of anything it overwrites that doorman didn't write. Uninstall removes only unchanged files
-  from the receipt, keeps changed ones, restores `.bak`s, and with no receipt removes nothing.
+  `.bak` of anything it overwrites that doorman didn't write. A file it has no record of is never
+  claimed without `--force`, even one identical to doorman's (a 0.1.0 copy, say). Uninstall removes
+  only unchanged files from the receipt, keeps changed ones, restores `.bak`s, and with no receipt
+  removes nothing.
 - Every script warns about config settings it doesn't recognize.
 
 ### Dependency install

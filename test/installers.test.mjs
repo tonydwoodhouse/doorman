@@ -316,6 +316,26 @@ for (const shell of SHELLS) {
         cleanup();
       }
     });
+
+    test('an identical file it did not install is only adopted with --force', async () => {
+      const { ws, tools, cleanup } = workspace();
+      try {
+        mkdirSync(tools, { recursive: true });
+        writeFileSync(join(tools, 'ensure.mjs'), readFileSync(join(REPO, 'scripts', 'ensure.mjs')));
+
+        const plain = await install(shell, ws);
+        assert.equal(plain.code, 0, plain.output);
+        assert.match(plain.stdout, /skip \(identical, but not installed by doorman[^\n]*\): tools\/doorman\/ensure\.mjs/);
+        assert.equal(entryFor(ws, 'tools/doorman/ensure.mjs'), undefined);
+
+        const forced = await install(shell, ws, [FORCE]);
+        assert.equal(forced.code, 0, forced.output);
+        assert.match(forced.stdout, /adopted: tools\/doorman\/ensure\.mjs/);
+        assert.equal(entryFor(ws, 'tools/doorman/ensure.mjs').action, 'adopted');
+      } finally {
+        cleanup();
+      }
+    });
   });
 }
 

@@ -369,11 +369,21 @@ install_file() {  # $1 = source, $2 = destination relative to the workspace, $3 
   fi
   current_hash_of "$target"
   find_entry "$rel" || true
-  if [ "$current_hash" = "$new_hash" ]; then
-    # Already exactly this version, so it is ours either way.
-    if [ "$entry_index" -ge 0 ]; then record "$rel" "$new_hash" "${r_actions[$entry_index]}" "${r_backups[$entry_index]}"
-    else record "$rel" "$new_hash" adopted ""; fi
+  if [ "$current_hash" = "$new_hash" ] && [ "$entry_index" -ge 0 ]; then
+    # Ours, and already exactly this version.
+    record "$rel" "$new_hash" "${r_actions[$entry_index]}" "${r_backups[$entry_index]}"
     unchanged=$((unchanged + 1))
+    return
+  fi
+  if [ "$current_hash" = "$new_hash" ]; then
+    # The same content, but not recorded as ours (a copy from before 0.2.0, or someone's own).
+    # Claiming it would let an uninstall delete it, so that takes --force like any other file.
+    if [ "$force" -ne 1 ]; then
+      echo "  skip (identical, but not installed by doorman — --force adopts it): $rel"
+      return
+    fi
+    record "$rel" "$new_hash" adopted ""
+    echo "  adopted: $rel"
     return
   fi
   if [ "$entry_index" -ge 0 ] && [ "$current_hash" = "${r_hashes[$entry_index]}" ]; then
