@@ -58,7 +58,8 @@ describe('session replay by storage mechanism', () => {
     const p = project('ss');
     const capture = await runScript('login-once.mjs', [], { env: p.env });
     assert.equal(capture.code, EXIT.OK, capture.output);
-    assert.match(capture.stdout, /Plus 1 sessionStorage key\(s\)/);
+    assert.match(capture.stdout, /127\.0\.0\.1\s+[^\n]*1 sessionStorage key\b/);
+    assert.match(capture.stdout, /sessionStorage saved separately to /);
     const check = await runScript('auth-check.mjs', [], { env: p.env });
     assert.equal(check.code, EXIT.OK, check.output);
   });

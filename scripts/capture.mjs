@@ -35,10 +35,10 @@ function refuseIfTrackable() {
 }
 
 /** Print what the saved session holds, by host and count. Never a value. */
-function reportSavedOrigins(state, dropped) {
+function reportSavedOrigins(state, dropped, sessionStorage) {
   const appHost = new URL(config.baseUrl).hostname;
   // The app first; the rest (usually the identity provider) in the order the sign-in visited them.
-  const summary = summarizeState(state).sort((a, b) => (b.host === appHost) - (a.host === appHost));
+  const summary = summarizeState(state, sessionStorage).sort((a, b) => (b.host === appHost) - (a.host === appHost));
   const width = Math.max(...summary.map((r) => r.host.length), 4);
   console.log('   Saved for (values not shown):');
   if (summary.length === 0) console.log('     nothing — the sign-in left no cookies or storage');
@@ -128,17 +128,14 @@ export async function captureSession() {
     // (Entra ID) keeps its tokens there by default.
     const sidecar = await saveSessionStorage(page);
     restricted &&= sidecar.restricted;
-    const sessionKeys = sidecar.keys;
     // IndexedDB is only in the snapshot if it was asked for, so say so while the app is still
     // open and we can see whether it uses any.
     const indexedDbNames = config.captureIndexedDB ? [] : await listIndexedDBNames(page);
 
     console.log('=== SIGN-IN COMPLETE ===');
     console.log(`✅ Session saved to ${STATE_PATH}`);
-    reportSavedOrigins(state, dropped);
-    if (sessionKeys > 0) {
-      console.log(`   Plus ${sessionKeys} sessionStorage key(s) -> ${SESSION_STORAGE_PATH}`);
-    }
+    reportSavedOrigins(state, dropped, sidecar);
+    if (sidecar.keys > 0) console.log(`   sessionStorage saved separately to ${SESSION_STORAGE_PATH}`);
     if (!restricted) {
       console.log('   ⚠️  Could not restrict the session files or their folder to your user account;');
       console.log('   other accounts on this machine may be able to read them. Check the folder\'s permissions.');

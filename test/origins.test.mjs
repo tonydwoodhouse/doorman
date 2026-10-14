@@ -39,7 +39,7 @@ describe('captureOrigins', () => {
     const { state: kept, dropped } = filterState(state, ['https://login.idp.test'], 'app.example.com');
     assert.deepEqual(kept.cookies.map((c) => c.domain), ['app.example.com', '.example.com', 'login.idp.test']);
     assert.deepEqual(kept.origins.map((o) => o.origin), ['https://app.example.com', 'https://login.idp.test']);
-    assert.deepEqual(dropped, [{ host: 'tracker.test', cookies: 1, localStorageKeys: 0, indexedDB: 0 }]);
+    assert.deepEqual(dropped, [{ host: 'tracker.test', cookies: 1, localStorageKeys: 0, sessionStorageKeys: 0, indexedDB: 0 }]);
   });
 
   test('a wildcard entry matches the domain and its subdomains', () => {
@@ -53,9 +53,15 @@ describe('summaries never carry values', () => {
   test('counts per host', () => {
     const summary = summarizeState(state);
     assert.deepEqual(summary.find((r) => r.host === 'app.example.com'),
-      { host: 'app.example.com', cookies: 1, localStorageKeys: 2, indexedDB: 0 });
+      { host: 'app.example.com', cookies: 1, localStorageKeys: 2, sessionStorageKeys: 0, indexedDB: 0 });
     assert.ok(!JSON.stringify(summary).includes('SECRET'));
     assert.equal(describeRow(summary[0]), '1 cookie, 2 localStorage keys');
+  });
+
+  test('the sessionStorage sidecar is counted under its origin', () => {
+    const summary = summarizeState(state, { origin: 'https://app.example.com', keys: 3 });
+    assert.equal(describeRow(summary.find((r) => r.host === 'app.example.com')),
+      '1 cookie, 2 localStorage keys, 3 sessionStorage keys');
   });
 
   test('warns about unrelated hosts and parent-domain cookies, not the app or a configured IdP', () => {

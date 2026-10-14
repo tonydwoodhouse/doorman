@@ -67,13 +67,16 @@ export function filterState(state, captureOrigins, appHost) {
 }
 
 /**
- * Per-host counts for a storage state: [{ host, cookies, localStorageKeys, indexedDB }], in the
- * order hosts first appear. Never includes a value.
+ * Per-host counts for a storage state: [{ host, cookies, localStorageKeys, sessionStorageKeys,
+ * indexedDB }], in the order hosts first appear. `sessionStorage` is the sidecar's { origin, keys },
+ * which storageState() doesn't include. Never includes a value.
  */
-export function summarizeState(state) {
+export function summarizeState(state, sessionStorage = null) {
   const byHost = new Map();
   const row = (host) => {
-    if (!byHost.has(host)) byHost.set(host, { host, cookies: 0, localStorageKeys: 0, indexedDB: 0 });
+    if (!byHost.has(host)) {
+      byHost.set(host, { host, cookies: 0, localStorageKeys: 0, sessionStorageKeys: 0, indexedDB: 0 });
+    }
     return byHost.get(host);
   };
   for (const cookie of state.cookies ?? []) row(cookie.domain.replace(/^\./, '').toLowerCase()).cookies++;
@@ -82,15 +85,19 @@ export function summarizeState(state) {
     r.localStorageKeys += entry.localStorage?.length ?? 0;
     r.indexedDB += entry.indexedDB?.length ?? 0;
   }
+  if (sessionStorage?.keys) {
+    row(new URL(sessionStorage.origin).hostname.toLowerCase()).sessionStorageKeys += sessionStorage.keys;
+  }
   return [...byHost.values()];
 }
 
-/** "2 cookies, 3 localStorage keys" for one summary row. */
+/** "2 cookies, 3 localStorage keys, 1 sessionStorage key" for one summary row. */
 export function describeRow(r) {
   const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
   const parts = [];
   if (r.cookies) parts.push(plural(r.cookies, 'cookie'));
   if (r.localStorageKeys) parts.push(plural(r.localStorageKeys, 'localStorage key'));
+  if (r.sessionStorageKeys) parts.push(plural(r.sessionStorageKeys, 'sessionStorage key'));
   if (r.indexedDB) parts.push(plural(r.indexedDB, 'IndexedDB database'));
   return parts.join(', ') || 'nothing';
 }

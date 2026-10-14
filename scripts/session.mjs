@@ -97,7 +97,7 @@ export async function newSessionContext(browser) {
  * replays a signed-out app and every check looks like an expired login.
  *
  * Always writes (or clears) the file, so a stale sidecar can never inject old tokens. Returns
- * { keys, restricted } — restricted is false if the file's permissions couldn't be narrowed.
+ * { origin, keys, restricted } — restricted is false if the file's permissions couldn't be narrowed.
  */
 export async function saveSessionStorage(page) {
   if (!config.captureSessionStorage) return { keys: 0, restricted: true };
@@ -113,7 +113,7 @@ export async function saveSessionStorage(page) {
   }
   const payload = { origin: new URL(page.url()).origin, entries };
   const restricted = writePrivateFile(SESSION_STORAGE_PATH, `${JSON.stringify(payload, null, 2)}\n`);
-  return { keys: entries.length, restricted };
+  return { origin: payload.origin, keys: entries.length, restricted };
 }
 
 /**
