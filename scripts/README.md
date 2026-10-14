@@ -170,7 +170,7 @@ output.
 | `idpHostPattern` | Optional case-insensitive regex matched against the URL **host** to detect an external identity provider. Set it to the known provider host pattern, or leave it `null`. |
 | `authenticatedUrlPattern` | Optional case-insensitive regex matched against the final app **pathname + query string**. Use it when a known post-login URL proves the session is established; otherwise leave it `null`. |
 | `authenticatedSelector` | Optional Playwright selector that must be visible after login and during checks. Choose an element that appears only for an authenticated user (for example, a profile menu or sign-out control); otherwise leave it `null`. |
-| `authenticatedText` | Optional text that must be visible on a signed-in page (e.g. `"Sign out"`). The same role as `authenticatedSelector`, for apps without a stable selector. Every configured positive signal must be present. |
+| `authenticatedText` | Optional text that must be visible after login and during checks (e.g. `"Sign out"`). The same role as `authenticatedSelector`, for apps without a stable selector. Every configured positive signal must be present. |
 | `unauthenticatedSelector` | Optional Playwright selector that proves the user is **not** signed in when visible — usually the sign-in form. For SPAs that answer 200 on every route and render a login component client-side. |
 | `unauthenticatedStatusCodes` | HTTP response statuses treated as an unauthenticated session. Default: `[401, 403]`. |
 | `defaultCheckPath` | Gated route checked when you pass no path argument. |

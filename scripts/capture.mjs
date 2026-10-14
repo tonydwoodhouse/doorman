@@ -61,7 +61,7 @@ function humanTimeout(ms) {
 export async function captureSession() {
   const {
     appName, loginPath, loginPathPattern, idpHostPattern,
-    authenticatedUrlPattern, authenticatedSelector, viewport, loginTimeoutMs,
+    authenticatedUrlPattern, authenticatedSelector, authenticatedText, viewport, loginTimeoutMs,
   } = config;
 
   if (refuseIfTrackable()) return EXIT.ENVIRONMENT;
@@ -116,8 +116,13 @@ export async function captureSession() {
       loginPathPattern, idpHostPattern, authenticatedUrlPattern,
     }, { timeout: loginTimeoutMs });
 
+    // Every positive signal a check will demand, so a session is never saved before it would pass.
     if (authenticatedSelector !== null) {
       await page.locator(authenticatedSelector).first()
+        .waitFor({ state: 'visible', timeout: loginTimeoutMs });
+    }
+    if (authenticatedText !== null) {
+      await page.getByText(authenticatedText).first()
         .waitFor({ state: 'visible', timeout: loginTimeoutMs });
     }
 
@@ -167,8 +172,8 @@ export async function captureSession() {
         console.error(`   App-relative path: ${stripBasePath(new URL(lastUrl).pathname)}`);
       }
       console.error('   If you DID sign in, the detection settings are probably wrong: check');
-      console.error('   loginPathPattern, authenticatedUrlPattern and authenticatedSelector in');
-      console.error('   doorman.config.json against that URL.');
+      console.error('   loginPathPattern, authenticatedUrlPattern, authenticatedSelector and');
+      console.error('   authenticatedText in doorman.config.json against that URL.');
     }
     return EXIT.LOGIN_INCOMPLETE;
   } finally {

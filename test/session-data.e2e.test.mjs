@@ -62,6 +62,24 @@ describe('session files from a sign-in through a separate identity provider', ()
     assert.equal(result.code, 0, result.output);
   });
 
+  test('capture waits for authenticatedText, and saves nothing if it never shows', async () => {
+    const file = join(dir, 'storageState.json');
+    const before = readFileSync(file, 'utf8');
+    const config = {
+      appName: 'fixture', baseUrl: app.origin, loginPath: '/idp-login?auto=1', defaultCheckPath: '/dashboard',
+      settleTimeoutMs: 300, loginTimeoutMs: 3000,
+    };
+    project.setConfig({ ...config, authenticatedText: 'Not on any page' });
+    const missing = await runScript('login-once.mjs', [], { env: project.env });
+    assert.equal(missing.code, 5, missing.output);
+    assert.match(missing.stderr, /authenticatedText/);
+    assert.equal(readFileSync(file, 'utf8'), before);
+
+    project.setConfig({ ...config, authenticatedText: 'Sign out' });
+    const shown = await runScript('login-once.mjs', [], { env: project.env });
+    assert.equal(shown.code, 0, shown.output);
+  });
+
   test('captureOrigins drops the identity provider and says so', async () => {
     project.setConfig({
       appName: 'fixture', baseUrl: app.origin, loginPath: '/idp-login?auto=1', defaultCheckPath: '/dashboard',
