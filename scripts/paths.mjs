@@ -9,18 +9,19 @@
 //   update), the config lives in the project being tested, and the session files live in the
 //   host's own plugin data directory, off the project's disk entirely. A live session then cannot
 //   be committed even by accident, which is the whole reason for the split. This is the same split
-//   whether the host is Claude Code or Codex — both install this repo's integrations/<host>/
-//   plugin next to the shared scripts/ this file lives in.
+//   whether the host is Claude Code or Codex — the repository root is the plugin for both, with
+//   this scripts/ directory inside it.
 //
 // The mode is decided by this file's own location, deliberately not by an environment variable: a
-// full checkout of this repo still has integrations/claude/.claude-plugin/plugin.json or
-// integrations/codex/.codex-plugin/plugin.json one level up, and the installer never copies
-// integrations/ at all. So a vendored install cannot slip onto the plugin path because some
-// *_PLUGIN_* variable happened to be set in the environment, and either layout behaves the same
-// run from a shell as it does run by an agent.
+// full checkout of this repo (or an installed copy of it) has .claude-plugin/plugin.json or
+// .codex-plugin/plugin.json one level up, and the vendored installer only ever copies scripts/. So
+// a vendored install cannot slip onto the plugin path because some *_PLUGIN_* variable happened to
+// be set in the environment, and either layout behaves the same run from a shell as it does run by
+// an agent.
 //
-// Nothing here has side effects and nothing exits: config.mjs owns the failing, so detect.mjs can
-// import this while the configuration is still missing or invalid.
+// Nothing exits here: config.mjs owns the failing, so detect.mjs can import this while the
+// configuration is still missing or invalid. The one side effect is recording which plugin data
+// directory this installed copy uses (see resolveDataDir below), and that never throws.
 //
 // Run it directly (`node paths.mjs`) to print the resolved layout — the fastest way to answer
 // "where did it put my session file?".
@@ -35,30 +36,79 @@ export const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 
 const REPO_ROOT_CANDIDATE = resolve(SCRIPT_DIR, '..');
 const HAS_PLUGIN_MANIFEST =
-  existsSync(join(REPO_ROOT_CANDIDATE, 'integrations', 'claude', '.claude-plugin', 'plugin.json')) ||
-  existsSync(join(REPO_ROOT_CANDIDATE, 'integrations', 'codex', '.codex-plugin', 'plugin.json'));
+  existsSync(join(REPO_ROOT_CANDIDATE, '.claude-plugin', 'plugin.json')) ||
+  existsSync(join(REPO_ROOT_CANDIDATE, '.codex-plugin', 'plugin.json'));
 
-/** Root of this checkout when it's the full doorman repo (either plugin's manifest is present
- *  beside scripts/), rather than a vendored copy; else null. */
+/** Root of the plugin (this repo, or the host's installed copy of it) when either host's manifest
+ *  sits beside scripts/, rather than a vendored copy; else null. */
 export const REPO_ROOT = HAS_PLUGIN_MANIFEST ? REPO_ROOT_CANDIDATE : null;
 
 export const PLUGIN_MODE = REPO_ROOT !== null;
 
+/** doorman's own per-user directory. DOORMAN_HOME moves it, which is mainly for tests. */
+export const DOORMAN_HOME = resolve(process.env.DOORMAN_HOME ?? join(homedir(), '.doorman'));
+
+function pathKey(dir) {
+  const full = resolve(dir);
+  return process.platform === 'win32' ? full.toLowerCase() : full;
+}
+
+/** Where this installed copy records the data directory it settled on. One file per plugin root,
+ *  keyed by a hash of the scripts' own path, because that path is the only thing a hook and the
+ *  agent's shell are both guaranteed to know. */
+export const DATA_DIR_RECORD = join(
+  DOORMAN_HOME, 'plugin-roots',
+  `${createHash('sha256').update(pathKey(SCRIPT_DIR)).digest('hex').slice(0, 16)}.json`,
+);
+
+function readRecordedDataDir() {
+  try {
+    const record = JSON.parse(readFileSync(DATA_DIR_RECORD, 'utf8'));
+    return typeof record?.dataDir === 'string' && record.dataDir ? resolve(record.dataDir) : null;
+  } catch {
+    return null;
+  }
+}
+
+function recordDataDir(dir) {
+  try {
+    mkdirSync(dirname(DATA_DIR_RECORD), { recursive: true });
+    writeFileSync(DATA_DIR_RECORD, `${JSON.stringify({
+      dataDir: dir, scriptDir: SCRIPT_DIR, recordedAt: new Date().toISOString(),
+    }, null, 2)}
+`, { encoding: 'utf8', flag: 'wx' });
+  } catch {
+    // Already recorded by another process (flag 'wx'), or doorman's home isn't writable. Either
+    // way the directory resolved below is still used for this run.
+  }
+}
+
 /**
  * Writable directory the host plugin owns, for session files and installed dependencies.
  *
- * DOORMAN_DATA_DIR wins outright, so a one-off run can be pointed anywhere. PLUGIN_DATA is
- * Codex's own name for this; CLAUDE_PLUGIN_DATA is what Claude Code sets (Codex also sets this
- * one, for compatibility with existing plugin hooks, but PLUGIN_DATA is checked first since it's
- * the name Codex documents). The final fallback keeps the scripts usable when run straight from a
- * shell, where no host has exported anything.
+ * The catch this has to handle: Claude Code and Codex both export their plugin data directory to
+ * hook commands (CLAUDE_PLUGIN_DATA, and Codex's own PLUGIN_DATA), but neither exports it to the
+ * shell the agent runs commands in. Left alone, the SessionStart hook would install Playwright in
+ * one directory while every script the agent runs looked in another.
+ *
+ * So the first process to resolve it — normally the hook, which can see the host's variable —
+ * records its answer in DATA_DIR_RECORD, and every later process for the same installed copy reads
+ * that record before looking at the environment. Whoever goes first, everyone agrees.
+ *
+ * DOORMAN_DATA_DIR still wins outright, so a one-off run can be pointed anywhere, and it is never
+ * recorded.
  */
-export const DATA_DIR = PLUGIN_MODE
-  ? resolve(
-      process.env.DOORMAN_DATA_DIR ?? process.env.PLUGIN_DATA ?? process.env.CLAUDE_PLUGIN_DATA ??
-      join(homedir(), '.doorman', 'plugin-data'),
-    )
-  : null;
+function resolveDataDir() {
+  if (process.env.DOORMAN_DATA_DIR) return resolve(process.env.DOORMAN_DATA_DIR);
+  const recorded = readRecordedDataDir();
+  if (recorded) return recorded;
+  const hostDir = process.env.PLUGIN_DATA ?? process.env.CLAUDE_PLUGIN_DATA;
+  const dir = resolve(hostDir ?? join(DOORMAN_HOME, 'plugin-data'));
+  recordDataDir(dir);
+  return dir;
+}
+
+export const DATA_DIR = PLUGIN_MODE ? resolveDataDir() : null;
 
 // ---------------------------------------------------------------------------
 // The project under test
@@ -135,11 +185,21 @@ export const PROJECT_SLUG = PLUGIN_MODE ? slugFor(PROJECT_DIR) : null;
 // Resolved locations
 // ---------------------------------------------------------------------------
 
-const PROJECT_CONFIG = join('.claude', 'doorman', 'doorman.config.json');
+// Deliberately not under .claude/: Claude Code treats that directory as sensitive and won't let an
+// agent edit files there without asking, and Codex has no reason to look in it. Configs written
+// there by 0.1.0 are still read (LEGACY_PROJECT_CONFIG), just never created.
+const PROJECT_CONFIG = join('.doorman', 'doorman.config.json');
+const LEGACY_PROJECT_CONFIG = join('.claude', 'doorman', 'doorman.config.json');
 const VENDORED_CONFIG = join('tools', 'doorman', 'doorman.config.json');
 
 function firstExisting(candidates) {
   return candidates.find((p) => existsSync(p)) ?? null;
+}
+
+/** The plugin-style config in a project directory (current location first, then 0.1.0's), or
+ *  null. A vendored install seeds its own config from this, so configuring twice isn't needed. */
+export function projectConfigIn(dir) {
+  return firstExisting([PROJECT_CONFIG, LEGACY_PROJECT_CONFIG].map((p) => join(dir, p)));
 }
 
 // DOORMAN_CONFIG always wins, so one project can be pointed at another's configuration for a
@@ -156,7 +216,7 @@ const defaultConfigPath = envConfig ?? (PLUGIN_MODE
 const configCandidates = envConfig
   ? [envConfig]
   : PLUGIN_MODE
-    ? [join(PROJECT_DIR, PROJECT_CONFIG), join(PROJECT_DIR, VENDORED_CONFIG)]
+    ? [PROJECT_CONFIG, LEGACY_PROJECT_CONFIG, VENDORED_CONFIG].map((p) => join(PROJECT_DIR, p))
     : [join(SCRIPT_DIR, 'doorman.config.json')];
 
 /** The configuration file in use, or where it should be created. */
@@ -237,7 +297,10 @@ export function describeLayout() {
     `screenshots   ${OUTPUT_DIR}`,
     `dependencies  ${join(DEPS_DIR, 'node_modules')}${existsSync(join(DEPS_DIR, 'node_modules')) ? '' : '   (not installed)'}`,
   ];
-  if (PLUGIN_MODE) lines.push(`plugin data   ${DATA_DIR}`);
+  if (PLUGIN_MODE) {
+    lines.push(`plugin data   ${DATA_DIR}`);
+    lines.push(`data record   ${DATA_DIR_RECORD}`);
+  }
   return lines;
 }
 

@@ -1,0 +1,8 @@
+{
+  "name": "doorman",
+  "description": "Get past a sign-in wall. When a page redirects to a login, returns 401 or 403, or renders signed-out, doorman replays a browser session the developer signed in for once — so pages behind a login stop being a dead end for browser automation. For forms login, OAuth/OIDC, SAML and enterprise SSO sessions kept in browser storage; no password or MFA response is ever automated or stored.",
+  "version": "0.2.0",
+  "author": { "name": "Tony Woodhouse" },
+  "keywords": ["authentication", "login", "sign-in", "session", "sso", "oauth", "saml", "playwright", "browser", "testing", "screenshots"],
+  "license": "MIT"
+}

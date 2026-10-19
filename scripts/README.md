@@ -8,12 +8,15 @@ cookie or browser storage behind.
 This toolkit gets you past that **without automating the login** (which is impractical to script
 and would mean handling passwords/MFA). Instead you sign in **once** in a real browser window,
 your authenticated session is saved to `storageState.json`, and every later headless run
-**replays** it — until it expires (~4–8h), when you sign in again.
+**replays** it — until the app ends that session (minutes for some apps, weeks for others), when
+you sign in again.
 
 > `storageState.json` (and `sessionStorage.json`, when your app uses it) contain a live session.
-> They are personal to you, and anyone holding them is signed in as you. Never commit or share
-> them. As a plugin they are kept outside your project entirely; vendored, they sit in this folder
-> and the shipped `.gitignore` keeps them out of source control.
+> No password or MFA response is in them, but they are bearer credentials: anyone holding them is
+> signed in as you until the session expires. Never commit or share them. They are written
+> owner-only; as a plugin they are kept outside your project entirely; vendored, they sit in this
+> folder and the shipped `.gitignore` keeps them out of source control — and a capture refuses to
+> save them anywhere Git could pick them up. See [Session data on disk](#session-data-on-disk).
 
 ## Where the files live
 
@@ -22,7 +25,7 @@ There are two ways to run this, and they differ only in where things are kept:
 | | Claude Code / Codex plugin | Vendored (`tools/doorman/`) |
 |---|---|---|
 | scripts | in the installed plugin | committed in your repo |
-| config | `<project>/.claude/doorman/doorman.config.json` | `doorman.config.json` beside the scripts |
+| config | `<project>/.doorman/doorman.config.json` | `doorman.config.json` beside the scripts |
 | session files | the host's plugin data directory, outside the project | beside the scripts, gitignored |
 | screenshots | the host's plugin data directory | beside the scripts, gitignored |
 | Playwright | installed once per machine | `node_modules` per project |
@@ -31,22 +34,29 @@ There are two ways to run this, and they differ only in where things are kept:
 node paths.mjs      # prints every one of those, resolved, for the project you're standing in
 ```
 
-`paths.mjs` decides which mode it's in from its own location — a full checkout of this repo has
-`integrations/claude/.claude-plugin/plugin.json` or `integrations/codex/.codex-plugin/plugin.json`
-one directory up, and the installer never copies `integrations/` — so a vendored install behaves
-the same however it is invoked. Data directory resolution accepts `DOORMAN_DATA_DIR`, Codex's own
-`PLUGIN_DATA`, and Claude Code's `CLAUDE_PLUGIN_DATA`, in that order. Every location can also be
+`paths.mjs` decides which mode it's in from its own location — the plugin (this repo, or the host's
+installed copy of it) has `.claude-plugin/plugin.json` or `.codex-plugin/plugin.json` one directory
+up, and the installer only ever copies `scripts/` — so a vendored install behaves the same however
+it is invoked.
+
+The plugin data directory needs one extra step. Both hosts tell hook commands where it is
+(Codex's `PLUGIN_DATA`, Claude Code's `CLAUDE_PLUGIN_DATA`) but neither tells the shell the agent
+runs commands in. So the first process to resolve it — normally the `SessionStart` hook, or with no
+hook (a Codex marketplace install) whichever script runs first, settling on `~/.doorman/plugin-data` — records
+its answer in `~/.doorman/plugin-roots/<hash>.json`, keyed by the installed scripts' own path, and
+every later run of that copy reads it back. `DOORMAN_DATA_DIR` overrides all of this, and
+`DOORMAN_HOME` moves `~/.doorman` itself. Every location can also be
 overridden directly: `DOORMAN_CONFIG`, `DOORMAN_SESSION_DIR`, `DOORMAN_OUTPUT_DIR`,
 `DOORMAN_DEPS_DIR`, `DOORMAN_PROJECT_DIR`.
 
 Vendored, run the commands **from this folder**. As a plugin, run them from anywhere inside the
-project (it is found from the working directory) using the plugin's path — Claude Code:
-`node "$CLAUDE_PLUGIN_ROOT/../../scripts/ensure.mjs"`; Codex: `node "$PLUGIN_ROOT/../../scripts/ensure.mjs"`.
+project (it is found from the working directory) using the installed plugin's path —
+`node "<plugin>/scripts/ensure.mjs"`; the skills work `<plugin>` out for the agent.
 The examples below use the short form.
 
 ## Does this work with my app?
 
-Almost certainly. The toolkit only ever talks to your app the way a browser does, so **nothing in
+Usually. The toolkit only ever talks to your app the way a browser does, so **nothing in
 it knows or cares what the server is written in** — ASP.NET, Django, Flask, FastAPI, Rails,
 Express, Next.js, Laravel, Spring, or a static SPA against an API all behave identically. Three
 requirements:
@@ -73,6 +83,21 @@ What genuinely doesn't work, because none of it leaves anything in browser stora
 Passkeys/WebAuthn are fine in the normal case: what gets replayed is the session cookie the passkey
 sign-in produces, not the passkey.
 
+What can still get in the way, even when the session *is* in browser storage:
+
+| Situation | What happens, and what to do |
+|---|---|
+| Popup sign-in (MSAL `loginPopup`, some OAuth buttons) | The main window never leaves the app, so the capture can't see the sign-in finish by URL. Set `authenticatedSelector`; the capture then waits for it. |
+| Unusual post-login landing | A sign-in that ends on a URL matching `loginPathPattern`, or that lingers on an interstitial, looks unfinished. Adjust `loginPathPattern`, or set `authenticatedUrlPattern` / `authenticatedSelector`. |
+| `sessionStorage` on several origins | Only the origin the sign-in ends on is saved (cookies, `localStorage` and IndexedDB are saved for every origin). |
+| Device-bound sessions (DBSC, token binding) | The session is tied to a key in the original browser profile; a replay in a fresh browser is rejected. Nothing to configure — these can't be replayed. |
+| IP-bound sessions | Fine on the machine that signed in; a session carried to CI from elsewhere is rejected. |
+| Anti-automation (bot detection, a CAPTCHA on every load) | Headless Chromium may be challenged where your own browser isn't. Use a test environment with it relaxed. |
+| Refresh tokens held only in memory | The saved session works until its access token expires, then can't refresh. Sign in again, or have the app persist the refresh token in test environments. |
+
+If a capture succeeds but the very next check is unauthenticated, it is one of these or a config
+problem — not something a second sign-in fixes.
+
 ## The one command
 
 ```bash
@@ -90,7 +115,9 @@ the five fields that are genuinely project-specific — everything else in the t
 optional and falls back to a built-in default, so you only add a field when you need to change it.
 It contains URLs and selectors, never secrets, so commit it and the rest of the team gets it free.
 (See [Where the files live](#where-the-files-live) for which directory it goes in; `detect.mjs`
-creates it if it isn't there yet.)
+creates it if it isn't there yet.) Once it exists it is yours: no install, upgrade or `--force`
+rewrites it. `node check-config.mjs` validates it without changing anything, and every script
+warns about a setting it doesn't recognize — usually a typo that would otherwise be silently ignored.
 
 ```json
 {
@@ -143,13 +170,17 @@ output.
 | `idpHostPattern` | Optional case-insensitive regex matched against the URL **host** to detect an external identity provider. Set it to the known provider host pattern, or leave it `null`. |
 | `authenticatedUrlPattern` | Optional case-insensitive regex matched against the final app **pathname + query string**. Use it when a known post-login URL proves the session is established; otherwise leave it `null`. |
 | `authenticatedSelector` | Optional Playwright selector that must be visible after login and during checks. Choose an element that appears only for an authenticated user (for example, a profile menu or sign-out control); otherwise leave it `null`. |
+| `authenticatedText` | Optional text that must be visible after login and during checks (e.g. `"Sign out"`). The same role as `authenticatedSelector`, for apps without a stable selector. Every configured positive signal must be present. |
+| `unauthenticatedSelector` | Optional Playwright selector that proves the user is **not** signed in when visible — usually the sign-in form. For SPAs that answer 200 on every route and render a login component client-side. |
 | `unauthenticatedStatusCodes` | HTTP response statuses treated as an unauthenticated session. Default: `[401, 403]`. |
 | `defaultCheckPath` | Gated route checked when you pass no path argument. |
 | `viewport` | Browser viewport `{ width, height }`. |
 | `loginTimeoutMs` | How long the interactive sign-in waits for you to finish sign-in + MFA. |
 | `settleTimeoutMs` | Grace period for JS-rendered content before screenshotting. |
+| `navigationTimeoutMs` | How long a page load may take before the check reports it as inconclusive (exit 3). Default 30 s. |
 | `captureSessionStorage` | Also capture/replay `sessionStorage` (default `true`). Required for MSAL / Entra ID SPAs — see below. |
 | `captureIndexedDB` | Include IndexedDB in the session snapshot (default `false`). Turn on for Firebase Authentication and other SDKs that store tokens there — see below. |
+| `captureOrigins` | Which sites' cookies and storage the saved session keeps. `"flow"` (default) keeps everything the sign-in set. An array of hosts — `"app.example.com"`, `"*.example.com"` or a full origin — keeps only those, plus the app's own host. See [Session data on disk](#session-data-on-disk). |
 | `expiryWarningMs` | Warn when the earliest cookie expiry is closer than this. Default 15 min. |
 | `configured` | Set to `false` only by `detect.mjs` when it found no URL, or by the installer when Node wasn't available. Every script then stops with exit 4 and instructions. Delete the line once `baseUrl` is right. Absent means configured, which is the normal case. |
 
@@ -162,14 +193,22 @@ malformed JSON, invalid regular expressions, or invalid values stop the script w
 
 You need [Node.js](https://nodejs.org/) 20+ installed.
 
-**As a plugin** there is nothing to do: a `SessionStart` hook (Claude Code and Codex both support
-it — see `integrations/claude/hooks/hooks.json` and `integrations/codex/hooks/hooks.json`) installs
-Playwright and Chromium into the host's plugin data directory the first time, in the background,
-and does nothing on every session after that. It is guarded by a hash of `package.json` +
+**As a plugin** under Claude Code there is nothing to do: the plugin's `SessionStart` hook
+(`hooks/hooks.json`) installs Playwright and Chromium into the host's plugin data directory the
+first time, in the background, and does nothing on every session after that. Codex reads the same
+hook file but runs plugin hooks only for plugins installed manually in the Codex desktop app, once
+trusted; after a Codex marketplace install, run `node install-deps.mjs --sync` once instead. It is guarded by a hash of `package.json` +
 `package-lock.json`, so bumping the pinned version is all it takes to have every machine update
 itself. `DOORMAN_SKIP_INSTALL=1` turns it off, and `node install-deps.mjs --sync` runs it in the
 foreground when you want to watch it (or if plugin-bundled hooks aren't enabled/trusted yet on your
 host — the skills also point here as a fallback).
+
+Only one install runs at a time. The lock (`.installing` in the dependency directory) records the
+installer's PID, host and start time, and is created exclusively. A second session's hook leaves a
+live install alone; `--sync` waits for it rather than failing. A lock whose process has gone — an
+install killed part-way — or that is more than two hours old is stale: the next run clears it,
+prints `doorman: cleared a stale install lock (…)`, and installs. Progress and errors go to
+`install.log` beside it.
 
 **Vendored**, from this folder:
 
@@ -259,6 +298,39 @@ Paths are then resolved beneath it (`/dashboard` → `https://localhost:5001/mya
 **stripped** — so you write them app-relative and they keep working if the base path changes. A
 path that already includes the base path is not prefixed twice.
 
+## Session data on disk
+
+A capture saves what the sign-in left in a **fresh, empty** browser: cookies and storage for the
+app, and usually for the identity provider it went through. None of it is a password, but all of
+it is a bearer credential until it expires.
+
+- **Owner-only, atomic.** Each session file is written to a temporary file, restricted (`0600`; on
+  Windows an ACL naming only your account), then renamed into place. A dedicated session directory
+  is `0700` / owner-only too. If the platform refuses, the capture says so rather than failing.
+- **Reported, not printed.** The capture lists each host it saved data for, with counts only:
+
+  ```
+  ✅ Session saved to …/storageState.json
+     Saved for (values not shown):
+       app.example.com    2 cookies, 3 localStorage keys
+       login.example.net  4 cookies
+     Note: Also saved: login.example.net (4 cookies). Expected if it's your identity provider
+     (set idpHostPattern to say so); otherwise list the hosts you expect in captureOrigins.
+  ```
+
+  It also notes cookies scoped to a parent domain (`.example.com`), which every sibling site
+  receives.
+- **`captureOrigins`.** `"flow"` keeps everything above. A host list keeps only those hosts plus the
+  app (and any cookie the browser would send to them). Dropping the identity provider is stricter,
+  at a cost: an expired app session then always needs a full sign-in, rather than a quick bounce
+  through the provider's still-valid session.
+- **Never where Git can commit it.** Before the browser opens, the capture asks Git whether the
+  session files would be picked up. Inside a repository they must be ignored — and not already
+  tracked — or it stops with exit 4 and the fix (add the ignore rule, or point
+  `DOORMAN_SESSION_DIR` outside the repository).
+- **Gone when you're done.** `ensure.mjs --clear` deletes the active profile's session; uninstalling
+  a vendored copy deletes every saved session.
+
 ## What a "session" actually is here
 
 A sign-in leaves its evidence in up to four places, and they are **not** all captured the same way:
@@ -282,7 +354,7 @@ know this paragraph exists.
 
 **What it costs.** One extra file, `sessionStorage.json`, alongside `storageState.json`. For an
 Entra app that file holds the ID/access tokens, so it is exactly as sensitive as the state file:
-it's gitignored, `ensure.mjs --clear` deletes it, and the repo installer's `--uninstall` deletes it
+it's owner-only and gitignored, `ensure.mjs --clear` deletes it, and the repo installer's `--uninstall` deletes it
 too. Never commit it, print it, or copy it off your machine. Two practical limits: it covers a
 single origin (the one you land on at the end of sign-in), and it is replayed only into that
 origin, so a redirect to the identity provider never receives it. Existing keys are never
@@ -318,16 +390,21 @@ Every script shares one scheme, so tooling (and agents) can branch on it:
 
 | Code | Meaning |
 |---|---|
-| `0` | Authenticated, page served HTTP 200. ✅ |
-| `1` | Session invalid: redirected to login or the identity provider, left the app origin, returned a configured unauthenticated status, or failed an authentication marker. Sign in again. |
+| `0` | **Valid.** A configured authenticated signal was present, or — when none is configured — the route answered 2xx with no sign of a login page (reported as status-only evidence). ✅ |
+| `1` | **Invalid.** Redirected to login or the identity provider, left the app origin, returned a configured unauthenticated status (401/403), showed `unauthenticatedSelector`, or a 2xx page lacked a configured authenticated signal. Sign in again. |
 | `2` | No session captured yet → `node ensure.mjs`. |
-| `3` | Session is **fine**; the route returned non-200. A wrong URL or an app bug — re-authenticating will not help. |
-| `4` | Environment problem: not configured, dev server down, Chromium not installed, invalid argument. Not an authentication failure. |
+| `3` | **Inconclusive.** The route proved nothing either way: 404, 5xx, another non-2xx status, a timeout or a failed navigation. A wrong URL or an unhealthy app — re-authenticating will not help, and the session is *not* claimed to be valid either. |
+| `4` | Environment problem: not configured, dev server down, Chromium not installed, invalid argument, or an unexpected crash. Not an authentication failure. |
 | `5` | The interactive sign-in was never completed — window closed or timed out. |
 
 The `1` / `3` split matters: a 404 page has no authenticated marker on it either, so treating a
 missing marker as an auth failure is exactly how you end up signing in repeatedly to fix a typo in
-a URL. Only a conclusive signal (login redirect, identity provider, off-origin, 401/403) yields `1`.
+a URL. And `3` is not `0`: a 404 or 500 doesn't prove the session works, so nothing reports it as
+valid. (0.1.0 called code 3 "bad route"; `EXIT.BAD_ROUTE` still exists as an alias.)
+
+`authenticatedSelector` or `authenticatedText` is what turns a `0` into positive proof. Without one,
+a 2xx response on the configured protected route is the practical default — and the success output
+says so, so it is never mistaken for more.
 
 ## Writing your own scripts
 
@@ -343,8 +420,9 @@ import { assessSession, goto, launchBrowser, newSessionContext, requireSession }
 requireSession();                                    // exits 2 if no session captured
 const browser = await launchBrowser();               // exits 4 if Chromium is missing
 const page = await (await newSessionContext(browser)).newPage();   // replays the session
-const response = await goto(page, new URL('/some/route', config.baseUrl).href);
-const { verdict, status, finalUrl, reasons } = await assessSession(page, response);
+const loaded = await goto(page, new URL('/some/route', config.baseUrl).href);
+// verdict is 'valid', 'invalid' or 'inconclusive'; evidence is 'explicit' or 'status-only'
+const { verdict, evidence, status, finalUrl, reasons } = await assessSession(page, loaded);
 await browser.close();
 ```
 
@@ -387,17 +465,15 @@ stable. `ensure.mjs --no-login` is the "check but don't interrupt me" variant.
 
 ## Skills (Claude Code and Codex)
 
-Each plugin ships three skills with identical behavior, addressed the way its host expects
+The plugin ships three skills, shared by both hosts and addressed the way each expects
 (`doorman:get-past-login` / `doorman:setup` / `doorman:vendor` on Claude Code, mentioned as
 `$get-past-login` / `$setup` / `$vendor` or matched automatically on Codex):
 **`get-past-login`** (verify and screenshot gated pages), **`setup`** (configure a project) and
-**`vendor`** (make a committed copy like this one). Nothing to install — see
-`integrations/claude/skills/` and `integrations/codex/skills/`.
+**`vendor`** (make a committed copy like this one). Nothing to install — see the plugin's `skills/`.
 
-For a vendored install the toolkit repo has `installers/get-past-login.SKILL.template.md` (Claude)
-and `installers/get-past-login.codex.SKILL.template.md` (Codex), which the installer drops at
-`.claude/skills/get-past-login/SKILL.md` and `.agents/skills/get-past-login/SKILL.md` with
-`--install-skill`. Both read `doorman.config.json` at runtime, so they need no substitutions. Worth
+For a vendored install the toolkit repo has `installers/get-past-login.SKILL.template.md`, which
+the installer drops at both `.claude/skills/get-past-login/SKILL.md` (Claude Code) and
+`.agents/skills/get-past-login/SKILL.md` (Codex) with `--install-skill`. Both copies read `doorman.config.json` at runtime, so they need no substitutions. Worth
 doing only if some contributors won't have a plugin installed, since it duplicates what the plugin
 already provides.
 
@@ -405,10 +481,10 @@ already provides.
 
 - **Route ≠ folder path.** A gated page's URL is whatever its framework routes it to, *not* the
   source-folder path. A 404 is not an auth failure.
-- **Git Bash on Windows** mangles a leading-slash argument into a Windows path. Simplest fix: drop
-  the leading slash (`node shot.mjs dashboard`) — the scripts add it back. `MSYS_NO_PATHCONV=1`
-  works too, but it disables path conversion for the whole command, including any absolute paths
-  and path-like environment variables in it.
+- **Git Bash on Windows** rewrites a leading-slash argument into a Windows path
+  (`C:/Program Files/Git/dashboard`). The scripts recognise that and undo it; when they can't tell
+  which Git install did it they exit 4 with "Not an app route" rather than requesting a nonsense
+  URL. Dropping the leading slash (`node shot.mjs dashboard`) always works — the scripts add it back.
 - **Let content settle.** JS-rendered grids/tables fill *after* load; `settleTimeoutMs` covers
   this, but bump it (or pass `--wait="<selector>"`) if pages look blank.
 - **Use a strong success marker when possible.** `authenticatedSelector` is more reliable than

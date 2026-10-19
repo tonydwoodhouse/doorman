@@ -6,14 +6,11 @@
 //       node auth-check.mjs --profile=admin
 //
 // Exit codes: 0 authenticated | 1 session invalid | 2 no session yet
-//             3 session fine but route non-200 | 4 environment problem (not auth)
+//             3 inconclusive: the route proved nothing (404/5xx/timeout) | 4 environment problem
 //
-// NOTE (Git Bash on Windows): a leading-slash arg gets mangled into a Windows
-// path. Prefix with MSYS_NO_PATHCONV=1, e.g.
-//   MSYS_NO_PATHCONV=1 node auth-check.mjs /admin/reports
-import { config, positionals } from './config.mjs';
+// Git Bash on Windows rewrites a leading-slash arg into a Windows path; config.mjs undoes it.
+import { target } from './config.mjs';
 import { CHECK_SHOT_PATH, checkAndReport } from './verify.mjs';
 
-const target = positionals[0] ?? config.defaultCheckPath;
 
 process.exitCode = await checkAndReport(target, { screenshotPath: CHECK_SHOT_PATH });
