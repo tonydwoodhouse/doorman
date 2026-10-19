@@ -70,7 +70,8 @@ nothing for doorman to do yet. Keep the detected `baseUrl`, add `"configured": f
 so no script mistakes a public page for a valid session, skip step 3, and tell the developer that
 plainly — including that once authentication exists, asking to set doorman up again picks up from
 there.
-Don't write notes or any other file beyond the config.
+Don't write notes or any other file beyond the config (and, under Codex, the `AGENTS.md` line in
+step 5).
 
 ## 3. Prove it works
 
@@ -103,6 +104,22 @@ found stated. If you had to guess `authenticatedSelector`, say so — it's the o
 correct in seconds and the one that most improves reliability.
 
 Suggest committing `.doorman/doorman.config.json` so the rest of the team gets it for free.
+
+## 5. Under Codex only: leave a pointer in `AGENTS.md`
+
+Claude Code runs a session-start hook that reminds every later session that doorman is set up, so
+skip this step there. A Codex marketplace install doesn't run plugin hooks, so without a pointer a
+later session won't think of doorman until a login wall has already stopped it. If `$DOORMAN`
+above still read literally `${CLAUDE_PLUGIN_ROOT}` (you are under Codex), add this one line to the
+project's root `AGENTS.md`, creating the file if needed. If a line beginning
+`<!-- doorman -->` is already there, replace it rather than adding a second:
+
+```
+<!-- doorman --> If you have the doorman plugin: when a page you need to check requires a signed-in user, or redirects to a login, returns 401/403 or renders signed-out, use its `get-past-login` skill rather than skipping the check or stopping at the login (config: `.doorman/doorman.config.json`).
+```
+
+It says "if you have the doorman plugin" on purpose: teammates without it read the same file. Tell
+the developer you added it, and that it's one line they can delete.
 
 ## Rules
 

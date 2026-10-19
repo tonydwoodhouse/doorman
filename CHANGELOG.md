@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.1
+
+- **The agent now knows doorman is there before it hits a login wall.** A second `SessionStart`
+  hook (`scripts/session-context.mjs`) tells it, in any project with a doorman config, to use
+  `get-past-login` whenever a page it needs to check requires a signed-in user. Until now the
+  plugin relied on the skill description alone, so an agent building a feature often skipped the
+  browser check or stopped at the login. Nothing is written into the project.
+- Under Codex, where a marketplace install runs no hooks, `setup` adds the same reminder as one
+  marked line in the project's `AGENTS.md`, worded for teammates who don't have the plugin.
+
 ## 0.2.0
 
 The first release meant to be installed by people other than its author. Every change below has
