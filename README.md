@@ -103,7 +103,8 @@ A second `SessionStart` hook tells the agent, at the start of each session, that
 doorman set up and to use `get-past-login` whenever a page it needs to check requires a signed-in
 user. Without it the skill only comes to mind once a login wall has already stopped the agent. It
 prints nothing in a project without `.doorman/doorman.config.json` (or one marked
-`"configured": false`), and writes nothing into the project.
+`"configured": false`), and writes nothing into the project. Where hooks don't run (a Codex
+marketplace install), `setup` adds a one-line pointer to the project's `AGENTS.md` instead.
 
 ### Session data
 
