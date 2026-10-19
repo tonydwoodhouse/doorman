@@ -99,6 +99,12 @@ under a Codex marketplace install, or any host that hasn't trusted the hook yet,
 to run `node install-deps.mjs --sync` once by hand instead. (With no hook to report the host's data
 directory, the plugin then keeps its data in `~/.doorman/plugin-data`.)
 
+A second `SessionStart` hook tells the agent, at the start of each session, that the project has
+doorman set up and to use `get-past-login` whenever a page it needs to check requires a signed-in
+user. Without it the skill only comes to mind once a login wall has already stopped the agent. It
+prints nothing in a project without `.doorman/doorman.config.json` (or one marked
+`"configured": false`), and writes nothing into the project.
+
 ### Session data
 
 Doorman never captures a password or an MFA response, but the session it saves — cookies and
@@ -270,7 +276,7 @@ doorman/                          # the repository root IS the plugin, for both 
 │   └── plugins/
 │       └── marketplace.json      # Codex marketplace -> this directory
 ├── skills/{get-past-login,setup,vendor}/SKILL.md   # one set of skills, shared by both hosts
-├── hooks/hooks.json              # SessionStart -> scripts/install-deps.mjs (both hosts)
+├── hooks/hooks.json              # SessionStart -> install-deps.mjs, session-context.mjs (both hosts)
 ├── scripts/                      # THE RUNTIME — used by both plugins and copied by the installers
 │   ├── paths.mjs                 # plugin vs vendored: where the config/session/output live
 │   ├── config.mjs                # config + CLI args (defaults < config file < env < flag)
@@ -289,6 +295,7 @@ doorman/                          # the repository root IS the plugin, for both 
 │   ├── shot.mjs                  # headless: screenshot a gated page (verifies first)
 │   ├── install-deps.mjs          # one-off, detached, hash-guarded Playwright install (SessionStart hook)
 │   ├── install-lock.mjs          # the install lock: who holds it, and whether it's stale
+│   ├── session-context.mjs       # SessionStart note: this project uses doorman (plugin only)
 │   ├── package.json              # deps: playwright (pinned)
 │   ├── package-lock.json         # committed on purpose — one Chromium for the whole team
 │   ├── .gitignore                # ignores node_modules / session files / *.png
