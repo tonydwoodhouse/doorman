@@ -13,6 +13,7 @@ import { existsSync, readFileSync } from 'fs';
 import { stripBase } from './verdict.mjs';
 import { allowEntryHost } from './origins.mjs';
 import { ensurePrivateDir } from './secure-files.mjs';
+import { DEFAULT_UI_FILE_IGNORE_PATTERN, DEFAULT_UI_FILE_PATTERN } from './ui-files.mjs';
 import {
   CONFIG_EXISTS, CONFIG_PATH, OUTPUT_DIR as OUT_DIR, PLUGIN_MODE, PROJECT_DIR, SCRIPT_DIR, SESSION_DIR,
   ensureDir, noteProjectPath,
@@ -112,6 +113,15 @@ const DEFAULTS = {
   captureOrigins: 'flow',
   // Warn when the session's earliest cookie expiry is closer than this (ms).
   expiryWarningMs: 900000,
+  // Plugin only: before the agent finishes, remind it once to look at UI files it changed but
+  // hasn't screenshotted since (verify-nudge.mjs, a Stop hook). false switches the reminder off.
+  verifyNudge: true,
+  // Case-insensitive regex, matched against repo-relative paths, for the files that reminder counts
+  // as UI. The default covers components, markup, templates and styles; see ui-files.mjs.
+  uiFilePattern: DEFAULT_UI_FILE_PATTERN,
+  // Case-insensitive regex for UI-looking files that never show on a page (tests, stories). null
+  // ignores nothing.
+  uiFileIgnorePattern: DEFAULT_UI_FILE_IGNORE_PATTERN,
 };
 
 // ---------------------------------------------------------------------------
@@ -268,6 +278,9 @@ function validateConfig(value) {
   validateBoolean(value.captureSessionStorage, 'captureSessionStorage');
   validateBoolean(value.captureIndexedDB, 'captureIndexedDB');
   validateBoolean(value.configured, 'configured');
+  validateBoolean(value.verifyNudge, 'verifyNudge');
+  validatePattern(value.uiFilePattern, 'uiFilePattern', false);
+  validatePattern(value.uiFileIgnorePattern, 'uiFileIgnorePattern', true);
   validateCaptureOrigins(value.captureOrigins);
 
   if (!Array.isArray(value.unauthenticatedStatusCodes) ||

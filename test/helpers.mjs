@@ -45,13 +45,17 @@ function writeConfig(project, config) {
   writeFileSync(join(project, '.doorman', 'doorman.config.json'), `${JSON.stringify(config, null, 2)}\n`);
 }
 
-/** Run one of doorman's scripts. Resolves { code, stdout, stderr, output } and never rejects. */
-export function runScript(script, args = [], { env, cwd, timeout = 60000 } = {}) {
+/**
+ * Run one of doorman's scripts. Resolves { code, stdout, stderr, output } and never rejects.
+ * `input` is written to its stdin — a hook's JSON, say — and stdin is always closed, as a host does.
+ */
+export function runScript(script, args = [], { env, cwd, timeout = 60000, input } = {}) {
   return new Promise((done) => {
-    execFile(process.execPath, [join(SCRIPTS, script), ...args], { env, cwd, timeout, windowsHide: true },
+    const child = execFile(process.execPath, [join(SCRIPTS, script), ...args], { env, cwd, timeout, windowsHide: true },
       (error, stdout, stderr) => {
         const code = error ? (typeof error.code === 'number' ? error.code : -1) : 0;
         done({ code, stdout, stderr, output: `${stdout}\n${stderr}` });
       });
+    child.stdin.end(typeof input === 'string' || input === undefined ? input : JSON.stringify(input));
   });
 }

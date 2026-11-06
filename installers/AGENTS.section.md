@@ -6,6 +6,11 @@
 browser session the developer signed in for once; you then carry on with whatever you were doing. It
 does no testing of its own.
 
+**It also means you can look at your own UI changes.** After any change that affects what a page
+shows — markup, styles, components, templates — screenshot the affected page (below) and open the
+PNG before you report the work as done. Unit tests passing is not the same as the page looking
+right, and "I haven't checked it in a browser" is not a finish line here.
+
 Read `{{TOOLS_DIR}}/doorman.config.json` first — it defines the app URL, the login path, and the
 markers that prove a session is live. Run every command below from `{{TOOLS_DIR}}`.
 

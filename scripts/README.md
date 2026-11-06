@@ -182,6 +182,9 @@ output.
 | `captureIndexedDB` | Include IndexedDB in the session snapshot (default `false`). Turn on for Firebase Authentication and other SDKs that store tokens there — see below. |
 | `captureOrigins` | Which sites' cookies and storage the saved session keeps. `"flow"` (default) keeps everything the sign-in set. An array of hosts — `"app.example.com"`, `"*.example.com"` or a full origin — keeps only those, plus the app's own host. See [Session data on disk](#session-data-on-disk). |
 | `expiryWarningMs` | Warn when the earliest cookie expiry is closer than this. Default 15 min. |
+| `verifyNudge` | Plugin only. Before the agent finishes, remind it once to screenshot UI files it changed and hasn't looked at since (a `Stop` hook). Default `true`; `false` switches it off. |
+| `uiFilePattern` | Plugin only. Case-insensitive regex, matched against repo-relative paths, for the files that reminder counts as UI. The default covers components, markup, templates and styles (`.tsx`, `.vue`, `.svelte`, `.css`, `.scss`, `.html`, `.cshtml`, `.razor`, `.erb`, …) but not plain `.ts`/`.js`; widen it for, say, Angular components (`"\\.(ts|html|scss)$"`). |
+| `uiFileIgnorePattern` | Plugin only. Case-insensitive regex for UI-looking files that never show on a page. The default skips tests, stories, snapshots and `tests/`, `e2e/`, `cypress/` folders; `null` skips nothing. |
 | `configured` | Set to `false` only by `detect.mjs` when it found no URL, or by the installer when Node wasn't available. Every script then stops with exit 4 and instructions. Delete the line once `baseUrl` is right. Absent means configured, which is the normal case. |
 
 Any field can be omitted; the built-in default in `config.mjs` is used — which is why the shipped
