@@ -107,15 +107,15 @@ Suggest committing `.doorman/doorman.config.json` so the rest of the team gets i
 
 ## 5. Under Codex only: leave a pointer in `AGENTS.md`
 
-Claude Code runs a session-start hook that reminds every later session that doorman is set up, so
-skip this step there. A Codex marketplace install doesn't run plugin hooks, so without a pointer a
+Claude Code runs hooks that remind every later session that doorman is set up, and nudge it to
+look at UI it changed before finishing, so skip this step there. A Codex marketplace install doesn't run plugin hooks, so without a pointer a
 later session won't think of doorman until a login wall has already stopped it. If `$DOORMAN`
 above still read literally `${CLAUDE_PLUGIN_ROOT}` (you are under Codex), add this one line to the
 project's root `AGENTS.md`, creating the file if needed. If a line beginning
 `<!-- doorman -->` is already there, replace it rather than adding a second:
 
 ```
-<!-- doorman --> If you have the doorman plugin: when a page you need to check requires a signed-in user, or redirects to a login, returns 401/403 or renders signed-out, use its `get-past-login` skill rather than skipping the check or stopping at the login (config: `.doorman/doorman.config.json`).
+<!-- doorman --> If you have the doorman plugin, you can open this app's pages in a real browser as a signed-in user: after a change that affects what a page shows, use its `get-past-login` skill to screenshot the page and look at it before reporting the work as done, and use it too when a page redirects to a login, returns 401/403 or renders signed-out (config: `.doorman/doorman.config.json`).
 ```
 
 It says "if you have the doorman plugin" on purpose: teammates without it read the same file. Tell

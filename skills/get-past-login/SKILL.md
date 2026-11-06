@@ -1,13 +1,20 @@
 ---
 name: "get-past-login"
-description: "Get past a sign-in wall that is blocking you. Use whenever a page redirects to a login, returns 401 or 403, renders as signed-out, or a saved session has expired — get a working session, then carry on with whatever you were already doing. Also use for any browser check, screenshot or CSS/layout inspection of a page that needs a signed-in user."
+description: "See a page of this app in a real browser as a signed-in user. Use to check a UI change before reporting it done, take a screenshot, or inspect CSS/layout; and whenever a page redirects to a login, returns 401 or 403, renders as signed-out, or a saved session has expired — get a working session, then carry on with whatever you were already doing."
 ---
 
 # Getting past a sign-in wall
 
-You hit a page that needs a signed-in user. This toolkit gets you through it by replaying a browser
+You need to see a page that requires a signed-in user — to check a change, or because one just
+blocked you. This toolkit gets you through it by replaying a browser
 session the developer established once, interactively — then you carry on with whatever you were
 doing. You never handle their credentials, and the toolkit does no testing of its own.
+
+**Checking a change you just made counts.** After any change that affects what a page shows —
+markup, styles, components, templates — screenshot the page it renders on (§2) and open the PNG
+before you report the work as done. In Claude Code a Stop hook reminds you, once, if you changed UI
+files and haven't screenshotted since; if the change has no visible effect or you can't check it
+here, say so in a line rather than skipping it silently.
 
 The authentication can be forms login, OAuth/OIDC, SAML, enterprise SSO or Microsoft Entra ID —
 anything that ends with a session in browser storage. A few apps still refuse a replayed session

@@ -1,6 +1,6 @@
 ---
 name: "get-past-login"
-description: "Get past a sign-in wall that is blocking you, using this workspace's vendored doorman toolkit. Use whenever a page redirects to a login, returns 401 or 403, renders as signed-out, or a saved session has expired — get a working session, then carry on with whatever you were already doing. Also use for any browser check, screenshot or CSS/layout inspection of a page that needs a signed-in user."
+description: "See a page of this app in a real browser as a signed-in user, using this workspace's vendored doorman toolkit. Use to check a UI change before reporting it done, take a screenshot, or inspect CSS/layout; and whenever a page redirects to a login, returns 401 or 403, renders as signed-out, or a saved session has expired — get a working session, then carry on with whatever you were already doing."
 ---
 
 # Getting past a sign-in wall

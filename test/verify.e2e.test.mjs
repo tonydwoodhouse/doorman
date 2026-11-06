@@ -3,6 +3,8 @@
 // asserted.
 import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
+import { existsSync, readFileSync, readdirSync } from 'fs';
+import { join } from 'path';
 import { startApp } from './fixtures/app.mjs';
 import { makeProject, runScript } from './helpers.mjs';
 
@@ -71,6 +73,17 @@ describe('verification outcomes against a live app', () => {
     const result = await runScript('shot.mjs', ['/missing', 'missing.png'], { env: project.env });
     assert.equal(result.code, EXIT.INCONCLUSIVE, result.output);
     assert.match(result.stderr, /No screenshot written/);
+  });
+
+  // The Stop hook (verify-nudge.mjs) counts a UI change as looked at once a screenshot postdates it.
+  test('shot.mjs records a screenshot only when it writes one', async () => {
+    const projects = join(project.root, 'data', 'projects');
+    const lastShot = () => join(projects, readdirSync(projects)[0], 'last-shot.json');
+    assert.ok(!existsSync(lastShot()), 'nothing has been screenshotted yet');
+    const before = Date.now();
+    const result = await runScript('shot.mjs', ['/dashboard'], { env: project.env });
+    assert.equal(result.code, EXIT.OK, result.output);
+    assert.ok(JSON.parse(readFileSync(lastShot(), 'utf8')).at >= before);
   });
 
   test('ensure.mjs does not open a sign-in for an inconclusive route', async () => {

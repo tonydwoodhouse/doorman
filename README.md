@@ -100,10 +100,21 @@ to run `node install-deps.mjs --sync` once by hand instead. (With no hook to rep
 directory, the plugin then keeps its data in `~/.doorman/plugin-data`.)
 
 A second `SessionStart` hook tells the agent, at the start of each session, that the project has
-doorman set up and to use `get-past-login` whenever a page it needs to check requires a signed-in
-user. Without it the skill only comes to mind once a login wall has already stopped the agent. It
-prints nothing in a project without `.doorman/doorman.config.json` (or one marked
-`"configured": false`), and writes nothing into the project. Where hooks don't run (a Codex
+doorman set up: that it **can** open the app's pages in a real browser as a signed-in user, and
+should screenshot any page its change affects before reporting the work as done. An agent assumes
+it has no browser, so without this it runs the unit tests and signs off with "I haven't checked it
+in a browser".
+
+A `Stop` hook backs that up. When the agent is about to finish, and files that show on a page
+(components, markup, templates, styles — not tests or stories) have changed since the session began
+with no `shot.mjs` screenshot since the newest of them, it asks the agent to look first — or to say
+in a line why it can't or needn't. It asks once per set of changes, so "this change has no visible
+effect" is an answer it accepts. It needs git to see what changed, and stays quiet without it.
+`"verifyNudge": false` in the config switches it off; `uiFilePattern` and `uiFileIgnorePattern`
+change what counts as UI (see [the field reference](scripts/README.md#field-reference)).
+
+Both hooks print nothing in a project without `.doorman/doorman.config.json` (or one marked
+`"configured": false`), and write nothing into the project. Where hooks don't run (a Codex
 marketplace install), `setup` adds a one-line pointer to the project's `AGENTS.md` instead.
 
 ### Session data
@@ -277,7 +288,7 @@ doorman/                          # the repository root IS the plugin, for both 
 │   └── plugins/
 │       └── marketplace.json      # Codex marketplace -> this directory
 ├── skills/{get-past-login,setup,vendor}/SKILL.md   # one set of skills, shared by both hosts
-├── hooks/hooks.json              # SessionStart -> install-deps.mjs, session-context.mjs (both hosts)
+├── hooks/hooks.json              # SessionStart -> install-deps.mjs, session-context.mjs; Stop -> verify-nudge.mjs
 ├── scripts/                      # THE RUNTIME — used by both plugins and copied by the installers
 │   ├── paths.mjs                 # plugin vs vendored: where the config/session/output live
 │   ├── config.mjs                # config + CLI args (defaults < config file < env < flag)
@@ -297,6 +308,10 @@ doorman/                          # the repository root IS the plugin, for both 
 │   ├── install-deps.mjs          # one-off, detached, hash-guarded Playwright install (SessionStart hook)
 │   ├── install-lock.mjs          # the install lock: who holds it, and whether it's stale
 │   ├── session-context.mjs       # SessionStart note: this project uses doorman (plugin only)
+│   ├── verify-nudge.mjs          # Stop: look at changed UI before finishing (plugin only)
+│   ├── ui-files.mjs              # which changed files count as UI, from git
+│   ├── activity.mjs              # session starts, last screenshot, nudges (plugin data dir)
+│   ├── hook-support.mjs          # hook stdin + config reading, shared by the hooks
 │   ├── package.json              # deps: playwright (pinned)
 │   ├── package-lock.json         # committed on purpose — one Chromium for the whole team
 │   ├── .gitignore                # ignores node_modules / session files / *.png

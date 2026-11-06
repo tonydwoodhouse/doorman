@@ -15,6 +15,7 @@
 //
 // Git Bash on Windows rewrites a leading-slash arg into a Windows path; config.mjs undoes it.
 import { isAbsolute, join } from 'path';
+import { recordShot } from './activity.mjs';
 import { OUTPUT_DIR, OUTPUT_SUFFIX, flags, positionals, target } from './config.mjs';
 import {
   EXIT, VERDICT, assessSession, describeSession, goto, launchBrowser, newSessionContext,
@@ -79,6 +80,8 @@ try {
   }
 
   await page.screenshot({ path: outPath, fullPage });
+  // Lets the Stop hook (verify-nudge.mjs) see that the agent has looked since its last UI change.
+  recordShot();
   console.log(`✅ ${target} => HTTP ${status}. Screenshot: ${outPath}`);
   console.log('   Open it with the Read tool — do not assume success from this exit code.');
 
