@@ -10,8 +10,10 @@
 - **A `Stop` hook backs that up** (`scripts/verify-nudge.mjs`). If files that show on a page have
   changed since the session began and `shot.mjs` hasn't written a screenshot since, it asks the
   agent to look before finishing — or to say in a line why it can't or needn't. Once per set of
-  changes, never in a loop, silent without git or a doorman config. New settings: `verifyNudge`
-  (`false` turns it off), `uiFilePattern` and `uiFileIgnorePattern` (what counts as UI).
+  changes, never in a loop, silent without git or a doorman config. Deleting or moving a UI file
+  counts as a change too: it is dated by its folder, since a moved file keeps its old mtime. New
+  settings: `verifyNudge` (`false` turns it off), `uiFilePattern` and `uiFileIgnorePattern`
+  (what counts as UI).
 - `get-past-login`'s description now leads with checking a page, not with login walls, so it
   matches when the agent is finishing a feature. The vendored `CLAUDE.md`/`AGENTS.md` section and
   the Codex `AGENTS.md` pointer that `setup` writes say the same.

@@ -5,7 +5,7 @@
 import { afterEach, beforeEach, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'child_process';
-import { mkdirSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'fs';
+import { mkdirSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, utimesSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { makeProject, runScript } from './helpers.mjs';
 
@@ -34,6 +34,20 @@ function touch(relPath, offsetSeconds) {
   const at = Date.now() / 1000 + offsetSeconds;
   utimesSync(path, at, at);
 }
+
+/** Date a project directory `offsetSeconds` from now, as adding or removing an entry would. */
+function dirAt(relPath, offsetSeconds) {
+  const at = Date.now() / 1000 + offsetSeconds;
+  utimesSync(join(project.project, relPath), at, at);
+}
+
+const git = (...args) => execFileSync('git', args, { cwd: project.project });
+
+/** Commit everything, so later deletions and renames show up in git status. */
+const commit = () => {
+  git('add', '-A');
+  git('-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-qm', 'base');
+};
 
 /** Pretend shot.mjs wrote a screenshot `offsetSeconds` from now. */
 function shotAt(offsetSeconds) {
@@ -87,6 +101,64 @@ describe('verify-nudge Stop hook', () => {
   test('files changed before the session started do not count', async () => {
     touch('src/App.vue', -60);
     await startSession();
+    quiet(await stop());
+  });
+
+  test('deleting a UI file this session gets a nudge; one deleted before does not', async () => {
+    touch('src/old.css', -120);
+    touch('src/keep.ts', -120);
+    commit();
+    unlinkSync(join(project.project, 'src/old.css'));
+    dirAt('src', -60);
+    await startSession();
+    quiet(await stop());
+
+    touch('src/gone.css', -120);
+    commit();
+    unlinkSync(join(project.project, 'src/gone.css'));
+    dirAt('src', 5);
+    const reason = blocked(await stop());
+    assert.ok(reason.includes('src/gone.css (deleted)'), reason);
+  });
+
+  test('deleting a whole UI folder is dated by the nearest folder left', async () => {
+    touch('src/widgets/Card.vue', -120);
+    commit();
+    await startSession();
+    rmSync(join(project.project, 'src'), { recursive: true });
+    dirAt('.', 5);
+    const reason = blocked(await stop());
+    assert.ok(reason.includes('src/widgets/Card.vue (deleted)'), reason);
+  });
+
+  test('a staged rename of an old UI file gets a nudge, though the file keeps its mtime', async () => {
+    touch('pages/about.tsx', -120);
+    commit();
+    await startSession();
+    git('mv', 'pages/about.tsx', 'pages/about-us.tsx');
+    dirAt('pages', 5);
+    const reason = blocked(await stop());
+    assert.ok(reason.includes('pages/about.tsx → pages/about-us.tsx'), reason);
+  });
+
+  test('a plain move of an old UI file gets a nudge too', async () => {
+    touch('pages/about.tsx', -120);
+    commit();
+    await startSession();
+    mkdirSync(join(project.project, 'pages/company'));
+    renameSync(join(project.project, 'pages/about.tsx'), join(project.project, 'pages/company/about.tsx'));
+    dirAt('pages', 5);
+    dirAt('pages/company', 5);
+    blocked(await stop());
+  });
+
+  test('a screenshot after a deletion satisfies it', async () => {
+    touch('src/old.css', -120);
+    commit();
+    await startSession();
+    unlinkSync(join(project.project, 'src/old.css'));
+    dirAt('src', 5);
+    shotAt(10);
     quiet(await stop());
   });
 

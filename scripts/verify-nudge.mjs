@@ -39,8 +39,14 @@ function sessionStart(input) {
   return null;
 }
 
+function describe(file) {
+  if (file.deleted) return `${file.path} (deleted)`;
+  if (file.from) return `${file.from} → ${file.path}`;
+  return file.path;
+}
+
 function reasonFor(files) {
-  const listed = files.slice(0, MAX_FILES_LISTED).map((f) => f.path).join(', ');
+  const listed = files.slice(0, MAX_FILES_LISTED).map(describe).join(', ');
   const more = files.length > MAX_FILES_LISTED ? ` and ${files.length - MAX_FILES_LISTED} more` : '';
   return (
     `doorman: you changed UI files this session (${listed}${more}) and haven't looked at them in ` +
@@ -68,7 +74,7 @@ async function main() {
   const since = Math.max(session.startedAt, lastShotAt(), session.nudgedUpTo ?? 0);
   const isUi = uiFileMatcher(config);
   const unchecked = files
-    .filter((f) => f.mtimeMs > since && isUi(f.path))
+    .filter((f) => f.mtimeMs > since && (isUi(f.path) || (f.from !== undefined && isUi(f.from))))
     .sort((a, b) => b.mtimeMs - a.mtimeMs);
   if (!unchecked.length) return;
 
